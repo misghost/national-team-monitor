@@ -82,8 +82,10 @@ fi
 echo "[4/5] 推送"
 if [[ -n "$LOGIN" ]]; then
   echo "      路径 A：REST API 单提交（自动创建/复用仓库 ${OWNER}/${REPO}）"
+  PRIVATE_ARGS=()
+  [[ "${GITHUB_PRIVATE:-0}" == "1" ]] && PRIVATE_ARGS=(--private)
   GITHUB_TOKEN="$TOKEN" GITHUB_REPO="$REPO" GITHUB_OWNER="$OWNER" \
-    python3 scripts/push_via_api.py
+    python3 scripts/push_via_api.py "${PRIVATE_ARGS[@]}"
   echo "[5/5] 已推送 → https://github.com/${OWNER}/${REPO}"
   exit 0
 fi

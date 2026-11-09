@@ -154,19 +154,32 @@ export DOMAIN=""                    # 可选，配置了才启用 Nginx 反代
 
 ## 推送 GitHub
 
+**方式 A（推荐）**：在 CodeBuddy 设置页 →「连接器」→ 授权 GitHub，然后直接：
+
 ```bash
-export GITHUB_TOKEN="ghp_xxx"        # 需 repo 权限
-export GITHUB_REPO="national-team-monitor"   # 可选，默认同名
-export GITHUB_OWNER=""               # 可选，默认取 token 所属用户
 ./scripts/push_github.sh
 ```
 
-脚本自动选择两条路径：
-1. **git push**：`github.com` 可达时，用 `gh repo create --push`；
-2. **REST API 单提交推送**：`github.com` 不可达但 `api.github.com` 可达时
-   （部分网络环境如此），用 `scripts/push_via_api.py` 经 Git Data API 一次提交全部文件。
+**方式 B**：自带 Personal Access Token（需 `repo` 权限；fine-grained 需
+Contents 读写 + Metadata 只读）：
 
-两条路径都只从环境变量读 token，**不打印、不落盘、不进版本库**。
+```bash
+GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh
+```
+
+可选环境变量：`GITHUB_REPO`（默认 `national-team-monitor`）、`GITHUB_OWNER`
+（默认取 token 所属用户）、`GITHUB_PRIVATE`（仓库可见性）。
+
+脚本执行 5 步：本地提交 → 取凭据 → 身份确认 → 推送 → 输出地址。推送路径自动选择：
+
+1. **REST API 单提交**（优先）：`api.github.com` 认证通过时，用
+   `scripts/push_via_api.py` 经 Git Data API 自动创建/复用仓库并一次提交全部文件；
+   不依赖 git 协议、`gh` 登录或预建仓库。
+2. **git push**（兜底）：仅当 API 不可用而 `github.com` 可达时，用
+   `http.extraHeader` 传认证推送（仓库需已存在）。
+
+凭据只经环境变量与命令替换传递，**不打印、不写入 `.git/config`、不进版本库**。
+未授权时脚本以退出码 2 明确停止并打印诊断，不会静默成功或虚构线上地址。
 
 ---
 
