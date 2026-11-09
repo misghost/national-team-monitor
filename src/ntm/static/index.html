@@ -737,7 +737,7 @@ main{flex:1 0 auto;width:100%}
       '<div class="muted">信号日期 ' + h(s.date) + ' ｜ 状态枚举 ' + h(s.state) + '</div>'
       + '<div class="signal-title">' + h(s.state_label || s.state) + '</div>'
       + '<div class="conf-row">'
-        + '<span class="k">置信度</span><span class="badge ' + confClass(conf) + '">' + h(confLabel(conf)) + '</span>'
+        + '<span class="k">置信度</span><span class="badge ' + confClass(conf) + '">' + h(s.confidence_label || confLabel(conf)) + '</span>'
         + '<span class="tag tag-est">推断 · 非实锤</span>'
         + '<span class="tag tag-neutral">无法确认买方身份</span>'
       + '</div>'
