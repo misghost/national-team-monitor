@@ -161,14 +161,19 @@ export DOMAIN=""                    # 可选，配置了才启用 Nginx 反代
 ```
 
 **方式 B**：自带 Personal Access Token（需 `repo` 权限；fine-grained 需
-Contents 读写 + Metadata 只读）：
+Contents 读写 + Metadata 只读）。推荐用**凭据文件**，令牌不会出现在命令文本里：
 
 ```bash
+# token.txt 仅一行令牌，权限建议 600，用完即删
+GITHUB_TOKEN_FILE=/path/to/token.txt ./scripts/push_github.sh
+
+# 或直接走环境变量（令牌会出现在命令文本中）
 GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh
 ```
 
 可选环境变量：`GITHUB_REPO`（默认 `national-team-monitor`）、`GITHUB_OWNER`
-（默认取 token 所属用户）、`GITHUB_PRIVATE`（仓库可见性）。
+（默认取 token 所属用户）、`GITHUB_PRIVATE=1`（创建私有仓库）。
+凭据优先级：`GITHUB_TOKEN` → `GITHUB_TOKEN_FILE` → GitHub 连接器 OAuth。
 
 脚本执行 5 步：本地提交 → 取凭据 → 身份确认 → 推送 → 输出地址。推送路径自动选择：
 
