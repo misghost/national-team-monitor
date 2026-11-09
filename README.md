@@ -160,6 +160,18 @@ export DOMAIN=""                    # 可选，配置了才启用 Nginx 反代
 ./scripts/push_github.sh
 ```
 
+> **连接器令牌的已知限制**：GitHub 连接器返回的是 GitHub App 用户令牌，
+> 实测 `POST /user/repos`（新建个人仓库）返回 403
+> `Resource not accessible by integration`，所需权限为
+> `administration=write; repository_creation=write`，该类令牌默认不具备。
+> 但它对**已存在的仓库**有完整写权限（实测 `push=True`）。因此使用连接器时需先在
+> GitHub 网页创建一个**空仓库**（不勾选 README / .gitignore / License），
+> 脚本会自动识别「仓库已存在」并跳过创建、直接推送：
+>
+> `https://github.com/new?name=national-team-monitor&visibility=public`
+>
+> 若改用具备 `repo` 权限的 classic PAT，则无需预建仓库，脚本可全自动建仓并推送。
+
 **方式 B**：自带 Personal Access Token（需 `repo` 权限；fine-grained 需
 Contents 读写 + Metadata 只读）。推荐用**凭据文件**，令牌不会出现在命令文本里：
 

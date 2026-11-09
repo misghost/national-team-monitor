@@ -18,7 +18,9 @@ from pathlib import Path
 
 import requests
 
-API = "https://api.github.com"
+# 允许覆盖 API 根地址：便于本地端到端验证与 GitHub Enterprise 场景。
+# 默认仍为官方 api.github.com，正常推送无需设置。
+API = os.getenv("GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 ROOT = Path(__file__).resolve().parents[1]
 
 EXCLUDE_DIRS = {
@@ -94,8 +96,26 @@ def main() -> int:
     elif r.status_code == 422:
         print("[2/6] 仓库已存在，复用")
     else:
-        print(f"[ERROR] 创建仓库失败：HTTP {r.status_code} {r.text[:200]}", file=sys.stderr)
-        return 4
+        # GitHub App 安装令牌 / 细粒度令牌无「创建个人仓库」权限
+        # （POST /user/repos 返回 403 Resource not accessible by integration），
+        # 但对已存在的仓库有完整写权限。此时检查目标仓库是否已由用户创建。
+        print(f"[2/6] 自动建仓不可用（HTTP {r.status_code}），检查仓库是否已存在…")
+        chk = s.get(base, timeout=15)
+        if chk.status_code == 200:
+            print("      仓库已存在，复用（跳过创建）")
+        else:
+            print(f"[ERROR] 令牌无建仓权限，且目标仓库 {owner}/{repo} 不存在"
+                  f"（GET /repos 返回 HTTP {chk.status_code}）", file=sys.stderr)
+            print("       原因：GitHub App / 细粒度令牌不能新建个人仓库，"
+                  "只能向已存在的仓库推送。", file=sys.stderr)
+            print("       处理：用下面链接一键建空仓库（名称已预填），"
+                  "保持不勾选任何初始化文件，然后重跑本脚本：", file=sys.stderr)
+            print(f"       https://github.com/new?name={repo}"
+                  "&description=A%E8%82%A1%E5%9B%BD%E5%AE%B6%E9%98%9F%E8%B5%84%E9%87%91%E4%B8%89%E5%B1%82%E7%9B%91%E6%8E%A7%E7%9C%8B%E6%9D%BF"
+                  "&visibility=public", file=sys.stderr)
+            print("       或改用具备 repo 权限的 classic PAT（可自动建仓）。",
+                  file=sys.stderr)
+            return 4
 
     # 2) 现有 main 分支（用于增量提交）
     ref = s.get(f"{base}/git/ref/heads/main", timeout=15)
