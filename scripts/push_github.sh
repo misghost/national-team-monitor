@@ -15,6 +15,8 @@ cd "$ROOT"
 REPO="${GITHUB_REPO:-national-team-monitor}"
 OWNER="${GITHUB_OWNER:-}"
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+PREFIX="${GITHUB_PATH_PREFIX:-}"   # 复用已有仓库时建议设置子目录，避免覆盖原文件
+BRANCH="${GITHUB_BRANCH:-main}"
 
 echo "[1/5] 本地 git 提交"
 if [[ ! -d .git ]]; then
@@ -93,12 +95,16 @@ fi
 
 echo "[4/5] 推送"
 if [[ -n "$LOGIN" ]]; then
-  echo "      路径 A：REST API 单提交（自动创建/复用仓库 ${OWNER}/${REPO}）"
+  echo "      路径 A：REST API 单提交（复用/创建仓库 ${OWNER}/${REPO} @ ${BRANCH}）"
+  [[ -n "$PREFIX" ]] && echo "      子目录：${PREFIX}/（原有文件保持不动）"
   PRIVATE_ARGS=()
   [[ "${GITHUB_PRIVATE:-0}" == "1" ]] && PRIVATE_ARGS=(--private)
   GITHUB_TOKEN="$TOKEN" GITHUB_REPO="$REPO" GITHUB_OWNER="$OWNER" \
+  GITHUB_PATH_PREFIX="$PREFIX" GITHUB_BRANCH="$BRANCH" \
     python3 scripts/push_via_api.py "${PRIVATE_ARGS[@]}"
-  echo "[5/5] 已推送 → https://github.com/${OWNER}/${REPO}"
+  URL="https://github.com/${OWNER}/${REPO}"
+  [[ -n "$PREFIX" ]] && URL="${URL}/tree/${BRANCH}/${PREFIX}"
+  echo "[5/5] 已推送 → ${URL}"
   exit 0
 fi
 

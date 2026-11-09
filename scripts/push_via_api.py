@@ -60,6 +60,10 @@ def main() -> int:
     ap.add_argument("--repo", default=os.getenv("GITHUB_REPO", "national-team-monitor"))
     ap.add_argument("--owner", default=os.getenv("GITHUB_OWNER", ""))
     ap.add_argument("--private", action="store_true")
+    ap.add_argument("--branch", default=os.getenv("GITHUB_BRANCH", "main"))
+    ap.add_argument("--prefix", default=os.getenv("GITHUB_PATH_PREFIX", ""),
+                    help="仓库内子目录前缀；复用已有仓库时强烈建议设置，"
+                         "可完全避免覆盖原有文件")
     args = ap.parse_args()
 
     token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
@@ -83,8 +87,12 @@ def main() -> int:
         return 3
     owner = args.owner or me.json()["login"]
     repo = args.repo
+    branch = args.branch
+    prefix = args.prefix.strip("/")
     base = f"{API}/repos/{owner}/{repo}"
-    print(f"[1/6] 身份确认：{owner} / {repo}")
+    print(f"[1/6] 身份确认：{owner} / {repo} @ {branch}")
+    if prefix:
+        print(f"      子目录模式：所有文件写入 {prefix}/，不改动仓库根下原有文件")
 
     # 1) 创建仓库（已存在则复用）
     r = s.post(f"{API}/user/repos", json={
@@ -117,20 +125,48 @@ def main() -> int:
                   file=sys.stderr)
             return 4
 
-    # 2) 现有 main 分支（用于增量提交）
-    ref = s.get(f"{base}/git/ref/heads/main", timeout=15)
+    # 2) 现有分支（用于增量提交）
+    ref = s.get(f"{base}/git/ref/heads/{branch}", timeout=15)
     parent_sha: str | None = None
     base_tree: str | None = None
+    existing: dict[str, str] = {}  # 路径 -> blob sha，用于冲突检测与备份
     if ref.status_code == 200:
         parent_sha = ref.json()["object"]["sha"]
         c = s.get(f"{base}/git/commits/{parent_sha}", timeout=15)
         c.raise_for_status()
         base_tree = c.json()["tree"]["sha"]
-        print("[3/6] 检出已有 main 分支（增量提交）")
+        # 递归读取整棵树，保留未在本树中声明的原有文件（base_tree 语义）
+        full = s.get(f"{base}/git/trees/{base_tree}",
+                     params={"recursive": "1"}, timeout=20)
+        if full.ok:
+            existing = {it["path"]: it["sha"] for it in full.json().get("tree", [])
+                        if it.get("type") == "blob"}
+        print(f"[3/6] 检出已有 {branch} 分支（增量提交，已有 {len(existing)} 个文件）")
     else:
-        print("[3/6] 空仓库，创建首个提交")
+        print(f"[3/6] {branch} 分支不存在，创建首个提交")
 
     files = collect_files()
+    target = lambda rel: f"{prefix}/{rel}" if prefix else rel  # noqa: E731
+
+    # 冲突检测：若目标路径会被覆盖，先把原内容备份到 _backup/ 下。
+    # 备份直接引用原 blob 的 sha，不重新上传内容，保证字节级一致。
+    conflicts = [rel for rel, _ in files if target(rel) in existing]
+    backup_dir = "_backup_before_push"
+    backups: list[dict] = []
+    for rel in conflicts:
+        orig = target(rel)
+        backups.append({
+            "path": f"{backup_dir}/{orig}", "mode": "100644",
+            "type": "blob", "sha": existing[orig],
+        })
+    if conflicts:
+        print(f"      检测到 {len(conflicts)} 个同名文件，原内容备份至 "
+              f"{backup_dir}/（字节级一致）")
+        for rel in conflicts[:8]:
+            print(f"        - {target(rel)}")
+        if len(conflicts) > 8:
+            print(f"        ... 另有 {len(conflicts) - 8} 个")
+
     print(f"[4/6] 上传 {len(files)} 个文件的 blob")
     tree: list[dict] = []
     for i, (rel, path) in enumerate(files, 1):
@@ -142,20 +178,29 @@ def main() -> int:
         if not b.ok:
             print(f"[ERROR] blob 上传失败 {rel}: HTTP {b.status_code}", file=sys.stderr)
             return 5
-        tree.append({"path": rel, "mode": "100644", "type": "blob", "sha": b.json()["sha"]})
+        tree.append({"path": target(rel), "mode": "100644",
+                     "type": "blob", "sha": b.json()["sha"]})
         if i % 10 == 0 or i == len(files):
             print(f"       {i}/{len(files)}")
+    tree.extend(backups)
 
     # 3) tree → commit → ref
     payload: dict = {"tree": tree}
     if base_tree:
         payload["base_tree"] = base_tree
     t = s.post(f"{base}/git/trees", json=payload, timeout=30)
-    t.raise_for_status()
+    if not t.ok:
+        print(f"[ERROR] 创建 tree 失败：HTTP {t.status_code} {t.text[:200]}",
+              file=sys.stderr)
+        return 6
+    t_data = t.json()
+    if t_data.get("truncated"):
+        print("[ERROR] tree 被截断，提交已中止", file=sys.stderr)
+        return 6
 
     c = s.post(f"{base}/git/commits", json={
         "message": COMMIT_MESSAGE,
-        "tree": t.json()["sha"],
+        "tree": t_data["sha"],
         "parents": [parent_sha] if parent_sha else [],
     }, timeout=30)
     if not c.ok:
@@ -164,17 +209,20 @@ def main() -> int:
     commit_sha = c.json()["sha"]
 
     if parent_sha:
-        u = s.patch(f"{base}/git/refs/heads/main", json={"sha": commit_sha}, timeout=20)
+        u = s.patch(f"{base}/git/refs/heads/{branch}", json={"sha": commit_sha}, timeout=20)
     else:
         u = s.post(f"{base}/git/refs", json={
-            "ref": "refs/heads/main", "sha": commit_sha,
+            "ref": f"refs/heads/{branch}", "sha": commit_sha,
         }, timeout=20)
     if not u.ok:
         print(f"[ERROR] 更新分支失败：HTTP {u.status_code} {u.text[:200]}", file=sys.stderr)
         return 7
 
+    location = f"https://github.com/{owner}/{repo}"
+    if prefix:
+        location += f"/tree/{branch}/{prefix}"
     print(f"[5/6] 提交完成：{commit_sha[:8]}")
-    print(f"[6/6] 已推送 → https://github.com/{owner}/{repo}")
+    print(f"[6/6] 已推送 → {location}")
     return 0
 
 
