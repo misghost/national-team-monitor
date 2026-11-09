@@ -94,28 +94,43 @@ else
 fi
 
 echo "[4/5] 推送"
+URL="https://github.com/${OWNER:-$LOGIN}/${REPO}"
+[[ -n "$PREFIX" ]] && URL="${URL}/tree/${BRANCH}/${PREFIX}"
+EXPORT_TOKEN=("GITHUB_TOKEN=$TOKEN" "GITHUB_REPO=$REPO" "GITHUB_OWNER=$OWNER"
+              "GITHUB_PATH_PREFIX=$PREFIX" "GITHUB_BRANCH=$BRANCH")
+
 if [[ -n "$LOGIN" ]]; then
   echo "      路径 A：REST API 单提交（复用/创建仓库 ${OWNER}/${REPO} @ ${BRANCH}）"
   [[ -n "$PREFIX" ]] && echo "      子目录：${PREFIX}/（原有文件保持不动）"
   PRIVATE_ARGS=()
   [[ "${GITHUB_PRIVATE:-0}" == "1" ]] && PRIVATE_ARGS=(--private)
-  GITHUB_TOKEN="$TOKEN" GITHUB_REPO="$REPO" GITHUB_OWNER="$OWNER" \
-  GITHUB_PATH_PREFIX="$PREFIX" GITHUB_BRANCH="$BRANCH" \
-    python3 scripts/push_via_api.py "${PRIVATE_ARGS[@]}"
-  URL="https://github.com/${OWNER}/${REPO}"
-  [[ -n "$PREFIX" ]] && URL="${URL}/tree/${BRANCH}/${PREFIX}"
-  echo "[5/5] 已推送 → ${URL}"
-  exit 0
-fi
-
-if [[ -n "$OWNER" ]] && curl -s --max-time 8 -o /dev/null https://github.com; then
-  echo "      路径 B：git push（仓库 ${OWNER}/${REPO} 需已存在）"
-  # 用 extraHeader 传认证，令牌不写入 remote / .git/config
-  AUTH="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
-  git -c "http.extraHeader=${AUTH}" push \
-    "https://github.com/${OWNER}/${REPO}.git" main
-  echo "[5/5] 推送完成 → https://github.com/${OWNER}/${REPO}"
-  exit 0
+  set +e
+  env "${EXPORT_TOKEN[@]}" python3 scripts/push_via_api.py "${PRIVATE_ARGS[@]}"
+  API_RC=$?
+  set -e
+  if [[ $API_RC -eq 0 ]]; then
+    echo "[5/5] 已推送 → ${URL}"
+    exit 0
+  fi
+  # API 写权限不足（App 令牌无 contents=write）时，自动降级到 git 协议。
+  # git 推送走仓库权限位，clone/push 带重试，且保持子目录零覆盖。
+  if [[ $API_RC -eq 5 || $API_RC -eq 6 ]]; then
+    echo "      API 写入被拒（退出码 ${API_RC}，通常为 contents=write 权限缺失）"
+    echo "      路径 A2：降级到 git 协议子目录推送"
+    set +e
+    env "${EXPORT_TOKEN[@]}" python3 scripts/push_via_git.py
+    GIT_RC=$?
+    set -e
+    if [[ $GIT_RC -eq 0 ]]; then
+      echo "[5/5] 已推送 → ${URL}"
+      exit 0
+    fi
+    echo "[ERROR] git 通道同样失败（退出码 ${GIT_RC}）。" >&2
+    echo "        常见于令牌仅有读权限：GitHub App 用户令牌（ghu_）无 contents=write，" >&2
+    echo "        需改用具备 repo 权限的 classic PAT（ghp_）后重跑本脚本。" >&2
+    exit "$GIT_RC"
+  fi
+  exit "$API_RC"
 fi
 
 echo "[ERROR] api.github.com 认证失败且 git 通道不可用，本地提交已保留。" >&2
