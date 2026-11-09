@@ -1,0 +1,24 @@
+[Unit]
+Description=National Team Monitor (A-share policy-bottom signal board)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ntm
+Group=ntm
+WorkingDirectory=/opt/national-team-monitor
+Environment=PYTHONPATH=/opt/national-team-monitor/src
+Environment=NTM_DATA_DIR=/opt/national-team-monitor/data
+Environment=NTM_ENABLE_SCHEDULER=0
+EnvironmentFile=-/opt/national-team-monitor/.env
+ExecStart=/opt/national-team-monitor/.venv/bin/python -m ntm serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/national-team-monitor/data
+
+[Install]
+WantedBy=multi-user.target

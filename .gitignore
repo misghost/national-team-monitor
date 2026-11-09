@@ -1,0 +1,29 @@
+# 凭据与本地环境
+.env
+*.env
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 运行期数据（演示库可随时重建）
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# 构建与编辑器
+build/
+dist/
+*.egg-info/
+.idea/
+.vscode/
+.DS_Store
+
+# 部署产物
+deploy/*.tar.gz

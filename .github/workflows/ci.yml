@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 测试与自检
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 单元测试
+        env:
+          PYTHONPATH: src
+        run: python -m pytest tests/ -q
+      - name: 不变式自检
+        env:
+          PYTHONPATH: src
+        run: python -m ntm check
+      - name: 冒烟：启动服务并访问健康接口
+        env:
+          PYTHONPATH: src
+          NTM_ENABLE_SCHEDULER: "0"
+        run: |
+          python -m uvicorn ntm.api:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/api/health; then exit 0; fi
+            sleep 1
+          done
+          echo "健康检查超时" >&2; exit 1
+
+  docker:
+    name: 镜像构建
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build -t national-team-monitor:ci .

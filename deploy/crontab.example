@@ -1,0 +1,7 @@
+# 不用容器时：由系统 cron 每交易日盘后刷新（16:30，周一至周五）
+# 安装：crontab deploy/crontab.example
+# 注意：此表达式只按周一至周五运行，法定节假日仍需人工/交易日历过滤。
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+30 16 * * 1-5 cd /opt/national-team-monitor && PYTHONPATH=src .venv/bin/python -m ntm refresh >> /var/log/ntm-refresh.log 2>&1

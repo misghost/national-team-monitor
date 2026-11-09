@@ -1,0 +1,50 @@
+services:
+  ntm:
+    build: .
+    image: national-team-monitor:1.0.0
+    container_name: ntm
+    restart: unless-stopped
+    environment:
+      NTM_DEMO_MODE: ${NTM_DEMO_MODE:-1}
+      NTM_AS_OF: ${NTM_AS_OF:-2026-11-09}
+      NTM_HOST: 0.0.0.0
+      NTM_PORT: 8000
+      NTM_ENABLE_SCHEDULER: ${NTM_ENABLE_SCHEDULER:-1}
+      NTM_REFRESH_HOUR: ${NTM_REFRESH_HOUR:-16}
+      NTM_REFRESH_MINUTE: ${NTM_REFRESH_MINUTE:-30}
+      NTM_MARKET_DROP_1D: ${NTM_MARKET_DROP_1D:--1.5}
+      NTM_MARKET_DROP_5D: ${NTM_MARKET_DROP_5D:--4.0}
+      NTM_ETF_SYNC_MIN: ${NTM_ETF_SYNC_MIN:-3}
+      NTM_ETF_NET_MIN_YI: ${NTM_ETF_NET_MIN_YI:-200}
+      NTM_OFFICIAL_LOOKBACK: ${NTM_OFFICIAL_LOOKBACK:-5}
+      NTM_WECHAT_WEBHOOK: ${NTM_WECHAT_WEBHOOK:-}
+      NTM_SMTP_HOST: ${NTM_SMTP_HOST:-}
+      NTM_SMTP_TO: ${NTM_SMTP_TO:-}
+      NTM_ALERT_MAX_PER_DAY: ${NTM_ALERT_MAX_PER_DAY:-3}
+      NTM_ENABLE_LIVE_ADAPTERS: ${NTM_ENABLE_LIVE_ADAPTERS:-0}
+    volumes:
+      - ntm-data:/app/data
+    ports:
+      - "${NTM_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # 可选：启用 Nginx 反代 —— docker compose --profile nginx up -d
+  nginx:
+    image: nginx:alpine
+    container_name: ntm-nginx
+    profiles: ["nginx"]
+    restart: unless-stopped
+    depends_on:
+      - ntm
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  ntm-data:
