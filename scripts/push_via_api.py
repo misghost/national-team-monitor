@@ -30,6 +30,16 @@ EXCLUDE_DIRS = {
 EXCLUDE_NAMES = {".env", ".DS_Store", ".coverage"}
 EXCLUDE_SUFFIXES = {".pyc", ".db", ".db-shm", ".db-wal", ".log", ".tar.gz"}
 
+
+def is_excluded(rel: str) -> bool:
+    """与项目 .gitignore 保持一致：排除运行期数据、构建产物与凭据文件。"""
+    parts = Path(rel).parts
+    if any(p in EXCLUDE_DIRS or p.endswith(".egg-info") for p in parts):
+        return True
+    if Path(rel).name in EXCLUDE_NAMES:
+        return True
+    return any(rel.endswith(s) for s in EXCLUDE_SUFFIXES)
+
 DESCRIPTION = (
     "A股国家队资金三层监控看板：L1实测/L2估算/L3代理，"
     "带置信度的托底信号（推断非实锤），不提供个股买卖建议"
@@ -43,10 +53,7 @@ def collect_files() -> list[tuple[str, Path]]:
         if not p.is_file():
             continue
         rel = p.relative_to(ROOT).as_posix()
-        parts = Path(rel).parts
-        if any(part in EXCLUDE_DIRS for part in parts):
-            continue
-        if p.name in EXCLUDE_NAMES or any(rel.endswith(s) for s in EXCLUDE_SUFFIXES):
+        if is_excluded(rel):
             continue
         if p.stat().st_size > 5 * 1024 * 1024:
             print(f"[warn] 跳过超大文件：{rel}", file=sys.stderr)
