@@ -36,6 +36,16 @@ else
 fi
 
 echo "[2/5] 获取 GitHub 凭据"
+# 凭据文件优先于环境变量之外的所有来源：命令文本中只出现路径，不出现令牌明文。
+if [[ -z "$TOKEN" && -n "${GITHUB_TOKEN_FILE:-}" ]]; then
+  if [[ -f "${GITHUB_TOKEN_FILE}" ]]; then
+    TOKEN="$(tr -d '[:space:]' < "${GITHUB_TOKEN_FILE}")"
+    echo "      已从凭据文件读取（内容不打印）"
+  else
+    echo "[!] GITHUB_TOKEN_FILE 指向的文件不存在" >&2
+    exit 2
+  fi
+fi
 if [[ -z "$TOKEN" ]]; then
   CONNECTOR="${CODEBUDDY_GITHUB_CONNECTOR:-$HOME/.codebuddy/skills/github-connector/scripts/get_token.sh}"
   if [[ -f "$CONNECTOR" ]]; then
@@ -57,7 +67,9 @@ else
   echo "    本地提交已完成，凭据就绪后重跑本脚本即可，无需其他改动。" >&2
   echo "    任选一种方式：" >&2
   echo "      a) CodeBuddy 设置页 →「连接器」→ 授权 GitHub，然后： ./scripts/push_github.sh" >&2
-  echo "      b) 提供 PAT： GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh" >&2
+  echo "      b) 凭据文件（推荐，令牌不进命令文本）：" >&2
+  echo "         GITHUB_TOKEN_FILE=/path/to/token.txt ./scripts/push_github.sh" >&2
+  echo "      c) 环境变量： GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh" >&2
   echo "         PAT 需 repo 权限（fine-grained：Contents 读写 + Metadata 只读）" >&2
   exit 2
 fi
