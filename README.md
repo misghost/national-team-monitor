@@ -184,7 +184,8 @@ GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh
 ```
 
 可选环境变量：`GITHUB_REPO`（默认 `national-team-monitor`）、`GITHUB_OWNER`
-（默认取 token 所属用户）、`GITHUB_PRIVATE=1`（创建私有仓库）。
+（默认取 token 所属用户）、`GITHUB_PRIVATE=1`（创建私有仓库）、
+`GITHUB_PATH_PREFIX`（仓库内子目录）、`GITHUB_BRANCH`（默认 `main`）。
 凭据优先级：`GITHUB_TOKEN` → `GITHUB_TOKEN_FILE` → GitHub 连接器 OAuth。
 
 脚本执行 5 步：本地提交 → 取凭据 → 身份确认 → 推送 → 输出地址。推送路径自动选择：
@@ -192,8 +193,20 @@ GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh
 1. **REST API 单提交**（优先）：`api.github.com` 认证通过时，用
    `scripts/push_via_api.py` 经 Git Data API 自动创建/复用仓库并一次提交全部文件；
    不依赖 git 协议、`gh` 登录或预建仓库。
-2. **git push**（兜底）：仅当 API 不可用而 `github.com` 可达时，用
-   `http.extraHeader` 传认证推送（仓库需已存在）。
+2. **git 协议子目录推送**（API 写权限不足时自动降级）：部分令牌（如 GitHub App
+   用户到服务器令牌 `ghu_`）无 `contents=write` 权限，Git Data API / Contents API
+   均返回 403。此时改用 `scripts/push_via_git.py`：浅克隆 → 复制文件到子目录 →
+   校验原有文件字节级零改动 → 单次提交 → 带重试推送。git 推送前使用
+   `oauth2:<token>` 的 Basic 认证与 HTTP/1.1（实测 `x-access-token` 格式与 HTTP/2 均超时）。
+3. **复用已有仓库**：`GITHUB_REPO=lpp GITHUB_PATH_PREFIX=national-team-monitor
+   ./scripts/push_github.sh` 会把项目写入 `lpp` 的 `national-team-monitor/` 子目录，
+   仓库根下原有文件保持不动；同名路径冲突时原内容自动备份到 `_backup_before_push/`。
+
+> **写权限的硬约束**：GitHub 连接器返回的是 `ghu_` 用户到服务器令牌，`contents`
+> 权限由 App 注册时固定，用户授权时无法提升。实测 Git Data API、Contents API、
+> `git push` 三条写通道均要求 `contents=write`。因此完成推送需要：
+> **具备 `repo` 权限的 classic PAT（`ghp_`）**，或由 App 方开放写权限的连接器。
+> 仅有读权限时脚本会明确报错退出，不会静默成功或虚构线上地址。
 
 凭据只经环境变量与命令替换传递，**不打印、不写入 `.git/config`、不进版本库**。
 未授权时脚本以退出码 2 明确停止并打印诊断，不会静默成功或虚构线上地址。
