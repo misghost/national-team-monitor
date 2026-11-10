@@ -1,0 +1,519 @@
+"""Wind MCP 真实数据适配器（配置驱动，默认禁用）。
+
+数据源：用户自行提供凭据的 Wind MCP Streamable HTTP 服务。
+本模块只做三件事：按日期取数 → 转换成平台 dataset 契约 → 交给
+``datasource.validate_dataset`` 校验；任何一步失败都抛 ``LiveDataError``
+并停止采集，**绝不降级回演示数据、绝不用合成数据填充**。
+
+取数口径（2026-11-10 实测核验）：
+- 条件① 市场：`get_index_kline`（000300.SH 日 K），一次取回区间序列，
+  由收盘价自行计算 1 日 / 5 日涨跌幅；成交额 TURNOVER 单位为元。
+- L2 份额：`fund_get_size` 的「场内流通份额（份）」= total_share，
+  「当期场内流通份额变化（份）」= share_change，
+  「基金份额变动日期」= 真实数据日期（非交易日会回退，以返回值为准）。
+  **不使用成交额、成交量、主力资金流入等二级市场字段顶替 total_share。**
+- 净值与量能：`fund_get_listed_historical_price` 的 IOPV 作为 nav，
+  成交额（元）换算为 amount_yi（亿元），仅供量能观测，不参与共振判定。
+- L3 官方公告：系统**不自动判定** is_supportive。仅从
+  ``data/verified_announcements.json`` 读取人工核验后的记录；
+  文件不存在即为空列表。这是防止「用新闻标题伪造确权」的刻意设计。
+- L1 季度确权：Wind MCP 未提供十大流通股东明细工具，保持空列表并显式标注缺口。
+
+历史累积：``db.save_dataset`` 是全量替换，若只取当日会清空历史序列、
+导致 5 日跌幅与图表失效。因此每日快照存 ``data/wind_history.json``，
+刷新时只补抓缺失交易日，再用完整历史组装 dataset。
+
+铁律不变：L2 永远 attributable=False，所有信号 is_confirmed=False；
+份额变化不等于国家队申购，接入真实数据不构成任何确权。
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from .. import config
+from ..datasource import LiveDataError, validate_dataset
+from .base import BaseAdapter, FetchResult
+
+SOURCE_NAME = "wind-mcp:fund_get_size+get_index_kline+fund_get_listed_historical_price"
+INDEX_CODE = "000300.SH"
+HISTORY_FILENAME = "wind_history.json"
+ANNOUNCEMENT_FILENAME = "verified_announcements.json"
+
+SIZE_FIELDS = [
+    "f_unit_floortrading", "f_unit_floortradingchange",
+    "f_unit_changedate", "f_netasset_total2",
+]
+PRICE_FIELDS = ["f_dq_amount", "f_dq_close", "f_nav_iopv"]
+
+# 中文列名用包含匹配，避免括号/空格差异导致解析失败
+COL_CODE_KEYS = ("基金代码",)
+COL_SHARE_KEYS = ("场内流通份额",)
+COL_CHANGE_KEYS = ("场内流通份额变化",)
+COL_CHANGEDATE_KEYS = ("基金份额变动日期",)
+COL_SCALE_KEYS = ("基金规模合计",)
+COL_AMOUNT_KEYS = ("成交额",)
+COL_CLOSE_KEYS = ("收盘价",)
+COL_IOPV_KEYS = ("IOPV",)
+
+
+def _norm_code(wind_code: str) -> str:
+    """Wind 代码 510300.SH -> 平台 6 位代码 510300。"""
+    return str(wind_code).strip().split(".")[0]
+
+
+def _wind_code(code: str) -> str:
+    """平台 6 位代码 -> Wind 代码。5 开头为沪市，1 开头为深市。"""
+    return code + (".SH" if code.startswith("5") else ".SZ")
+
+
+def _num(value: Any) -> float | None:
+    if value is None:
+        return None
+    s = str(value).strip().replace(",", "")
+    if s in ("", "--", "-", "None", "null", "nan"):
+        return None
+    try:
+        f = float(s)
+    except ValueError:
+        return None
+    return f if f == f and abs(f) != float("inf") else None  # 过滤 NaN / inf
+
+
+def _col(header: list[str], *keywords: str) -> int | None:
+    for i, h in enumerate(header):
+        if all(k in h for k in keywords):
+            return i
+    return None
+
+
+def parse_markdown_tables(text: str) -> list[dict[str, str]]:
+    """解析 Wind 工具返回的 Markdown 表格，返回按表头列名索引的字典列表。"""
+    tables: list[list[list[str]]] = []
+    cur: list[list[str]] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith("|") and s.endswith("|"):
+            cur.append([c.strip() for c in s.strip("|").split("|")])
+        elif cur:
+            tables.append(cur)
+            cur = []
+    if cur:
+        tables.append(cur)
+
+    rows: list[dict[str, str]] = []
+    for table in tables:
+        if len(table) < 2:
+            continue
+        header = table[0]
+        if not any("基金代码" in h for h in header):
+            continue
+        body = table[1:]
+        # 跳过 |---|---| 分隔行
+        body = [r for r in body if not all(re.fullmatch(r":?-{2,}:?", c or "") for c in r)]
+        for r in body:
+            if len(r) != len(header):
+                continue
+            rows.append({h: r[i] for i, h in enumerate(header)})
+    return rows
+
+
+def _find(row: dict[str, str], *keywords: str) -> str | None:
+    # 取列名最短的匹配项，避免「场内流通份额」误命中「当期场内流通份额变化」。
+    hits = [(len(k), k, v) for k, v in row.items() if all(x in k for x in keywords)]
+    return min(hits)[2] if hits else None
+
+
+class WindMCPClient:
+    """Wind MCP（stateless Streamable HTTP）最小 JSON-RPC 客户端。"""
+
+    def __init__(self, endpoint: str, key: str, timeout: int, min_interval: float):
+        self.endpoint = endpoint
+        self.key = key
+        self.timeout = timeout
+        self.min_interval = min_interval
+        self._last = 0.0
+        self._id = 1000
+
+    def _throttle(self) -> None:
+        wait = self.min_interval - (time.monotonic() - self._last)
+        if wait > 0:
+            time.sleep(wait)
+        self._last = time.monotonic()
+
+    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        headers = {
+            "Authorization": "Bearer " + self.key,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=self.timeout)
+        except requests.RequestException as exc:
+            # 只暴露异常类型，绝不回显 URL / 请求头 / 凭据
+            raise LiveDataError(f"Wind MCP 请求失败（{type(exc).__name__}），已停止采集") from None
+        if resp.status_code != 200:
+            raise LiveDataError(f"Wind MCP 返回 HTTP {resp.status_code}，已停止采集")
+
+        data = self._decode(resp.content)
+        if "error" in data:
+            code = (data["error"] or {}).get("code", "unknown")
+            raise LiveDataError(f"Wind MCP 返回错误（code={code}），已停止采集")
+        return data
+
+    @staticmethod
+    def _decode(content: bytes) -> dict[str, Any]:
+        """兼容纯 JSON 与 SSE 两种响应。
+
+        必须用 resp.content 自行按 UTF-8 解码：requests 对 text/event-stream
+        默认按 ISO-8859-1 解码，中文会变成控制字符；再用 str.splitlines()
+        会把 U+0085 等误判为换行，把一条 data: JSON 拦腰截断。
+        """
+        raw = content.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                if "error" in parsed:
+                    code = (parsed["error"] or {}).get("code", "unknown")
+                    raise LiveDataError(f"Wind MCP 返回错误（code={code}），已停止采集")
+                return parsed
+        except ValueError:
+            pass
+
+        chunks = []
+        for line in raw.split("\n"):  # 只按 \n 切，避免误判 Unicode 行分隔符
+            s = line.strip()
+            if s.startswith("data:"):
+                chunks.append(s[5:].strip())
+        if not chunks:
+            raise LiveDataError("Wind MCP SSE 响应中没有 data 段，已停止采集")
+        candidates = list(reversed(chunks))
+        if len(chunks) > 1:
+            candidates.append("\n".join(chunks))  # SSE 规范：多 data 行用换行拼接
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                if "error" in parsed:
+                    code = (parsed["error"] or {}).get("code", "unknown")
+                    raise LiveDataError(f"Wind MCP 返回错误（code={code}），已停止采集")
+                return parsed
+        raise LiveDataError("Wind MCP 响应无法解析为 JSON 对象，已停止采集")
+
+    def call(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        """通过 market_call_tool 调用指定 Wind 工具，返回文本内容。"""
+        self._id += 1
+        self._throttle()
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": "tools/call",
+            "params": {
+                "name": "market_call_tool",
+                "arguments": {
+                    "toolName": tool_name,
+                    "arguments": json.dumps(arguments, ensure_ascii=False),
+                },
+            },
+        }
+        result = self._post(payload).get("result", {})
+        if result.get("isError"):
+            raise LiveDataError(f"Wind 工具 {tool_name} 返回错误，已停止采集")
+        texts = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
+        text = "\n".join(texts).strip()
+        if not text:
+            raise LiveDataError(f"Wind 工具 {tool_name} 未返回数据，已停止采集")
+        return text
+
+
+class WindMCPAdapter(BaseAdapter):
+    """把 Wind MCP 的取数结果组装成平台 dataset，并强制通过校验闸门。"""
+
+    name = "wind_mcp"
+    verified = True
+
+    def __init__(self, client: WindMCPClient | None = None, history_path: Path | None = None):
+        self.client = client
+        self.history_path = history_path or (config.DATA_DIR / HISTORY_FILENAME)
+        self.announcement_path = config.DATA_DIR / ANNOUNCEMENT_FILENAME
+        self.wind_codes = [_wind_code(code) for code, _ in config.CORE_ETF]
+        self.pool = {code: name for code, name in config.CORE_ETF}
+        self.backfill_days = config.wind_backfill_days()
+
+    # ---------- 配置闸门 ----------
+    def _build_client(self) -> WindMCPClient:
+        if self.client is not None:
+            return self.client
+        endpoint = config.data_endpoint()
+        key = config.data_api_key()
+        if not endpoint or not key:
+            raise LiveDataError(
+                "Wind MCP 未配置：需要 NTM_DATA_ENDPOINT 与 NTM_DATA_API_KEY。"
+                "系统已停止采集，不会降级到演示数据。"
+            )
+        if not config.data_verified():
+            raise LiveDataError(
+                "NTM_DATA_VERIFIED=0：数据源核验清单未完成。已停止采集，不会降级到演示数据。"
+            )
+        return WindMCPClient(
+            endpoint, key, config.WIND_MCP_TIMEOUT, config.WIND_MCP_MIN_INTERVAL
+        )
+
+    # ---------- 历史快照 ----------
+    def _load_history(self) -> dict[str, Any]:
+        if self.history_path.exists():
+            try:
+                data = json.loads(self.history_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("days"), dict):
+                    return data
+            except (OSError, ValueError):
+                pass
+        return {"version": 1, "days": {}}
+
+    def _save_history(self, history: dict[str, Any]) -> None:
+        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.history_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(history, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(self.history_path)
+
+    # ---------- 各层取数 ----------
+    def _fetch_kline(self, client: WindMCPClient, as_of: str) -> list[dict[str, Any]]:
+        end = date.fromisoformat(as_of)
+        begin = end - timedelta(days=config.wind_kline_days())
+        text = client.call("get_index_kline", {
+            "windcode": INDEX_CODE,
+            "begin_date": begin.isoformat(),
+            "end_date": end.isoformat(),
+            "period": "1d",
+            "count": 90,
+        })
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            raise LiveDataError("get_index_kline 返回非结构化 JSON，已停止采集") from None
+        if payload.get("error"):
+            raise LiveDataError("get_index_kline 返回错误，已停止采集")
+        block = payload.get("data") or {}
+        cols = [c.get("name", "") for c in block.get("columns", [])]
+        rows = block.get("rows", [])
+        if not rows or "TIME" not in cols or "MATCH" not in cols:
+            raise LiveDataError("get_index_kline 未返回有效 K 线序列，已停止采集")
+        i_time, i_close = cols.index("TIME"), cols.index("MATCH")
+        i_turn = cols.index("TURNOVER") if "TURNOVER" in cols else None
+
+        series: list[dict[str, Any]] = []
+        for r in rows:
+            day = str(r[i_time])[:10]
+            if day > as_of:  # 防前视：绝不使用晚于基准日的数据
+                continue
+            close = _num(r[i_close])
+            if close is None or close <= 0:
+                continue
+            series.append({"date": day, "_close": close,
+                           "_amount": _num(r[i_turn]) if i_turn is not None else None})
+        if len(series) < 6:
+            raise LiveDataError("get_index_kline 有效交易日不足 6 天，无法计算 5 日涨跌幅，已停止采集")
+
+        closes = [r["_close"] for r in series]  # 先固化，避免下方 pop 影响前一日取值
+        for i, row in enumerate(series):
+            prev = closes[i - 1] if i >= 1 else closes[i]
+            base5 = closes[i - 5] if i >= 5 else closes[0]
+            amount_yi = row["_amount"] / 1e8 if row["_amount"] is not None else None
+            row.update({
+                "index_close": row["_close"],
+                "index_change_pct": round((row["_close"] / prev - 1) * 100, 4),
+                "index_change_5d_pct": round((row["_close"] / base5 - 1) * 100, 4),
+                "amount_yi": round(amount_yi, 4) if amount_yi is not None else None,
+            })
+            row.pop("_close", None)
+            row.pop("_amount", None)
+        return series
+
+    def _fetch_day(self, client: WindMCPClient, day: str) -> tuple[str, dict[str, dict[str, Any]]] | None:
+        """取单个交易日的 7 只 ETF 份额与行情。返回 (真实数据日期, 快照)。"""
+        size_text = client.call("fund_get_size", {
+            "windCodes": self.wind_codes,
+            "asOfDate": day,
+            "includeFields": SIZE_FIELDS,
+        })
+        price_text = client.call("fund_get_listed_historical_price", {
+            "windCodes": self.wind_codes,
+            "tradeDate": day,
+            "includeFields": PRICE_FIELDS,
+        })
+        size_rows = parse_markdown_tables(size_text)
+        price_rows = parse_markdown_tables(price_text)
+        if not size_rows:
+            raise LiveDataError(f"fund_get_size({day}) 未返回可解析表格，已停止采集")
+
+        # ETF 份额是 T+1 数据：当日盘后尚未发布时，Wind 会把「基金份额变动日期」
+        # 回退到上一交易日，且「当期场内流通份额变化」返回 "--"。这是正常状态，
+        # 跳过该日即可 —— 绝不能把 11-09 的份额冒充成 11-10 的数据写入。
+        changedates = [
+            (_find(r, *COL_CHANGEDATE_KEYS) or "").strip()
+            for r in size_rows if _find(r, *COL_CODE_KEYS)
+        ]
+        if changedates and all(d and d < day for d in changedates):
+            return None
+
+        prices: dict[str, dict[str, str]] = {}
+        for row in price_rows:
+            raw = _find(row, *COL_CODE_KEYS)
+            if raw:
+                prices[_norm_code(raw)] = row
+
+        funds: dict[str, dict[str, Any]] = {}
+        actual_date = ""
+        for row in size_rows:
+            raw_code = _find(row, *COL_CODE_KEYS)
+            if not raw_code:
+                continue
+            code = _norm_code(raw_code)
+            if code not in self.pool:
+                continue
+            total_share = _num(_find(row, *COL_SHARE_KEYS))
+            share_change = _num(_find(row, *COL_CHANGE_KEYS))
+            changedate = (_find(row, *COL_CHANGEDATE_KEYS) or "").strip()
+            scale = _num(_find(row, *COL_SCALE_KEYS))
+            price = prices.get(code, {})
+            iopv = _num(_find(price, *COL_IOPV_KEYS))
+            close = _num(_find(price, *COL_CLOSE_KEYS))
+            amount = _num(_find(price, *COL_AMOUNT_KEYS))
+            # nav 优先 IOPV（净值口径），其次收盘价，最后用 规模/份额 兜底
+            nav = iopv or close or (scale / total_share if scale and total_share else None)
+            if not (total_share and total_share > 0 and nav and nav > 0
+                    and share_change is not None and changedate):
+                raise LiveDataError(
+                    f"fund_get_size({day}) 中 {code} 缺关键字段（份额/份额变化/净值/日期），已停止采集"
+                )
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", changedate):
+                raise LiveDataError(f"份额变动日期格式非法：{changedate}，已停止采集")
+            if changedate != day:
+                raise LiveDataError(
+                    f"fund_get_size({day}) 返回的份额变动日期为 {changedate}，"
+                    "各层数据日期不同步，已停止采集"
+                )
+            actual_date = max(actual_date, changedate)
+            funds[code] = {
+                "total_share": total_share,
+                "share_change": share_change,
+                "nav": nav,
+                "amount_yi": round(amount / 1e8, 4) if amount is not None else 0.0,
+                "est_net_yi": round(share_change * nav / 1e8, 4),
+            }
+        if not funds or not actual_date:
+            raise LiveDataError(f"fund_get_size({day}) 未返回标的池内有效数据，已停止采集")
+        return actual_date, funds
+
+    def _verified_announcements(self) -> list[dict[str, Any]]:
+        """L3 只接受人工核验录入，系统不自动判定 is_supportive。"""
+        if not self.announcement_path.exists():
+            return []
+        try:
+            items = json.loads(self.announcement_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        if not isinstance(items, list):
+            return []
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not all(k in item for k in ("date", "source", "title", "type", "is_supportive")):
+                continue
+            out.append({
+                "date": str(item["date"]), "source": str(item["source"]),
+                "title": str(item["title"]), "type": str(item["type"]),
+                "is_supportive": bool(item["is_supportive"]),
+                "url": str(item.get("url", "")), "layer": "L3",
+            })
+        return out
+
+    # ---------- 主流程 ----------
+    def fetch(self, as_of: str) -> FetchResult:
+        client = self._build_client()
+        try:
+            date.fromisoformat(as_of)
+        except (TypeError, ValueError):
+            raise LiveDataError(f"as_of 不是合法 ISO 日期：{as_of}") from None
+
+        market = self._fetch_kline(client, as_of)
+        trade_days = [r["date"] for r in market]
+        history = self._load_history()
+        days = history["days"]
+
+        targets = trade_days[-self.backfill_days:]
+        missing = [d for d in targets if d not in days]
+        for d in missing:
+            got = self._fetch_day(client, d)
+            if got:
+                actual, funds = got
+                if actual <= as_of:  # 防前视
+                    days.setdefault(actual, {}).update(funds)
+        self._save_history(history)
+
+        # 各层日期对齐：市场行情取到份额最新日为止，避免「今天盘中指数 + 昨天份额」
+        # 混算信号。ETF 份额为 T+1，全站以最新完整交易日为口径。
+        latest = max(days) if days else ""
+        if latest:
+            market = [r for r in market if r["date"] <= latest]
+        if not market:
+            raise LiveDataError("行情序列与份额数据日期无交集，已停止采集")
+
+        etf: list[dict[str, Any]] = []
+        for day in sorted(days):
+            if day > as_of:
+                continue
+            for code, snap in sorted(days[day].items()):
+                if code not in self.pool:
+                    continue
+                etf.append({
+                    "date": day, "code": code, "name": self.pool[code],
+                    "total_share": snap["total_share"],
+                    "share_change": snap["share_change"],
+                    "nav": snap["nav"],
+                    "est_net_yi": snap["est_net_yi"],
+                    "amount_yi": snap.get("amount_yi", 0.0),
+                    "layer": "L2", "attributable": False,
+                    "source": "wind-mcp:fund_get_size(场内流通份额)",
+                })
+        if not etf:
+            raise LiveDataError("Wind MCP 未取到任何 ETF 份额数据，已停止采集")
+
+        dataset: dict[str, Any] = {
+            "market": market,
+            "etf": etf,
+            "announcements": [a for a in self._verified_announcements() if a["date"] <= as_of],
+            "holdings": [],
+            "source": SOURCE_NAME,
+            "is_demo": False,
+            "as_of": as_of,
+            "data_latest_date": latest,
+        }
+        problems = validate_dataset(dataset, as_of)
+        if problems:
+            raise LiveDataError(
+                "Wind 真实数据质量校验未通过（已丢弃本次采集，不入库、不降级）："
+                + "；".join(problems[:12])
+            )
+
+        warnings = [
+            "真实数据已接入，但 L2 仍不可归因：无法识别 ETF 申购人身份",
+            "所有信号 is_confirmed 恒为 False，本系统不提供买卖建议",
+            "L1 季度十大流通股东未接入（Wind MCP 无对应明细工具），相关结论不可用",
+            "L3 官方公告仅接受人工核验录入，系统不自动判定，三重共振不会因新闻误触发",
+            "Wind 数据源的授权、版权与频控责任由接入方承担",
+        ]
+        return FetchResult(dataset=dataset, source=SOURCE_NAME,
+                           is_demo=False, verified=True, warnings=warnings)
+
+
+__all__ = ["WindMCPAdapter", "WindMCPClient", "parse_markdown_tables", "SOURCE_NAME"]

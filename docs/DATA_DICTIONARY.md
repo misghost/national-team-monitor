@@ -174,3 +174,30 @@ date PK / state / confidence / is_confirmed(恒 0) / payload(JSON)。
 7. 标的池恰为 7 只、代码唯一、`159845` 管理人必须为华夏；
 8. 量能 `summary.is_signal` 恒为 `False`，且输出文案不含买/卖/建仓等指令措辞；
 9. `signals.conditions` 集合恒为三重共振三条件，量能观测不得成为第四条件。
+10. 演示数据集不得通过 `validate_dataset()`；真实适配器失败不得降级回演示数据；
+    `GET /api/datasource` 不得返回任何凭据值。
+
+---
+
+## 四、`GET /api/datasource` 契约
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `mode` | str | `demo` / `snapshot` / `live` |
+| `mode_label` | str | 中文模式名 |
+| `is_demo` | bool | 当前数据集是否为合成演示数据 |
+| `verified` | bool | 真实数据源是否完成核验清单 |
+| `dataset_source` / `dataset_as_of` | str | 数据集来源与基准日 |
+| `credential_configured` / `endpoint_configured` | bool | **仅布尔值，绝不返回凭据内容** |
+| `ready_to_switch` | bool | 端点、凭据、核验三项是否齐备 |
+| `layers[]` | list | 三层接入状态、必需字段、是否可归因 |
+| `gaps[]` | list | 当前接入缺口与口径约束 |
+| `iron_rules[]` | list | 接入真实数据后依然成立的铁律 |
+| `wind_alice_review` | dict | 2026-11-10 对 Wind Alice Market 推文的核查结论 |
+
+真实数据源请求契约（`src/ntm/adapters/live.py`）：
+`POST {NTM_DATA_ENDPOINT}`，`Authorization: Bearer <NTM_DATA_API_KEY>`，
+响应为 `{"dataset": {market, etf, announcements, holdings}}` 或直接返回 dataset。
+`etf` 每条必须含 `total_share / nav / share_change / est_net_yi / source`，
+且 `source` 不得含 `demo / synthetic / mock / 演示 / 模拟` 标记。
+校验不通过时抛 `LiveDataError`，**不入库、不降级**。

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from . import config
 
@@ -21,17 +21,27 @@ def refresh_once(as_of: str | None = None) -> dict:
     from .adapters.demo import DEMO_AS_OF
     from .alert import dispatch
 
-    day = as_of or DEMO_AS_OF
+    # 演示模式有固定基准日；真实模式必须用当天，否则定时器每天都会重刷同一天。
+    day = as_of or (DEMO_AS_OF if config.DEMO_MODE else date.today().isoformat())
     adapter = get_adapter()
     result = adapter.fetch(day)
+    # 真实适配器失败会在此处抛错，不会走到入库，也不会降级到演示数据。
     db.save_dataset(result.dataset)
+    db.set_meta("dataset_as_of", day)
+    db.set_meta("dataset_source", result.source)
+    db.set_meta("dataset_is_demo", "1" if result.is_demo else "0")
+    if result.dataset.get("data_latest_date"):
+        db.set_meta("data_latest_date", str(result.dataset["data_latest_date"]))
+    # verified 只针对「已接入的真实数据」；演示数据自洽不等于数据源已核验
+    db.set_meta("dataset_verified", "1" if (not result.is_demo and result.verified) else "0")
     signal = db.get_latest_signal()
     alerts = dispatch(signal) if signal else []
     return {
         "as_of": day,
         "source": result.source,
         "is_demo": result.is_demo,
-        "verified": result.verified,
+        # verified 只描述「已核验的真实数据源」，演示数据自洽不算数据源已核验
+        "verified": bool(result.verified and not result.is_demo),
         "warnings": result.warnings,
         "signals": len(db.get_signals(days=10000)),
         "signal_state": signal["state"] if signal else None,

@@ -170,22 +170,84 @@
 
 ---
 
-## 八、真实数据源接入核验清单（默认未完成）
+## 八、真实数据源接入核验清单
 
-`src/ntm/adapters/live.py` 只是骨架，`NTM_ENABLE_LIVE_ADAPTERS=0` 默认禁用。
-接入前必须逐项确认并留档：
+`NTM_ENABLE_LIVE_ADAPTERS=0` 默认禁用；逐项确认并留档（Wind MCP 已核验项见 8.2）：
 
-- [ ] 数据源的**授权与使用条款**（Wind / iFinD 需商业授权；公开页面需确认版权与 robots）
-- [ ] 接口字段含义、更新频率、历史回溯范围、频控与反爬策略
-- [ ] 只取 **ETF 总份额** 与 **净值**；禁用「主力资金流入」类指标
+- [x] 数据源的**授权与使用条款**：凭据由接入方自行提供并承担授权、版权与频控责任，已留档
+- [x] 接口字段含义、更新频率、历史回溯范围：2026-11-10 协议握手 + 真实取数实测，见 8.2
+- [x] 只取 **ETF 总份额** 与 **净值**：`validate_dataset` 明确拒绝成交额/资金流顶替 `total_share`
 - [ ] 主体账户名的实际披露字符串清单，补全别名映射并补测试
-- [ ] 季报/年报披露日抓取，保证 `disclose_date` 真实（不能用报告期末代替）
-- [ ] 交易日历（节假日、临时休市），当前 `is_trading_day` 仅做周末粗判
-- [ ] 失败重试、幂等去重、数据质量校验与缺失/异常值处理
-- [ ] 归因边界：所有 L2 输出仍标注「不可归因」，接入真实数据也不改变这一事实
+- [ ] 季报/年报披露日抓取：L1 尚未接入，保持空列表并显式标注，不伪造 `disclose_date`
+- [ ] 交易日历（节假日、临时休市）：定时表达式仅按周一至周五粗判
+- [x] 失败即停、幂等去重、数据质量校验：快照按 `(date, code)` 去重，四层字段闸门 + PIT 前视校验
+- [x] 归因边界：所有 L2 输出仍标注「不可归因」，接入真实数据也不改变这一事实
 
 > **重要**：即使接入真实数据，「谁在申购 ETF」依然不可知。真实数据不会让
 > `is_confirmed` 变成 True，只会让 L2 估算更准确。
+
+### 8.1 外部数据源核查：Wind Alice Market（2026-11-10）
+
+用户提供的微信推文《重磅：Alice Market个人订阅正式上线！A股行情免费用!》
+经核查为 **Wind 商业产品推广**，不是数据源：
+
+| 核查项 | 结论 |
+|--------|------|
+| 推文是否含接口地址 / 参数 / 返回样例 | **均无** |
+| 产品性质 | Wind MCP / Skill / Agent 个人订阅，体验版 49 元/月起 |
+| 接入凭据 | `WIND_API_KEY`，需在 `market.windalice.com` 注册后自行生成 |
+| 官方安装协议 | `https://aifinmarket.wind.com.cn/skill.md`（安装向导，非接口文档） |
+| 免费范围 | 官方表述「A股行情免费」，字段清单以官网为准，推文未列出 |
+| MCP server 分类 | stock_data / fund_data / index_data / bond_data / financial_docs / economic_data / analytics_data |
+| 是否覆盖 ETF 总份额 | **未证实**，需核对 fund_data 工具契约 |
+| 是否覆盖季度十大流通股东 | **未证实**，需核对权限 |
+
+**关键口径**：本平台 L2 需要的是 ETF **每日总份额**（一级市场申赎），
+这不属于「行情」范畴；L1 需要季度持有人与真实披露日。因此即使免费行情可用，
+也只可能覆盖条件①（指数涨跌幅）与量能观测（成交额），**无法替代 L2/L1**。
+
+另外，WorkBuddy 会话级数据服务返回的是 12 小时临时凭证，属于对话内查询能力，
+**不能作为云服务器后台的长期数据源**；服务器端接入必须使用可长期调用、
+已完成授权与字段核验的端点。
+
+系统据此把接入层实现为配置驱动：`src/ntm/datasource.py` 定义字段契约与状态，
+`src/ntm/adapters/live.py` 在凭据/端点/核验三者齐备前拒绝采集，
+失败即报错停止，绝不降级回演示数据。状态可由 `GET /api/datasource` 查看。
+
+### 8.2 Wind MCP 实测核验记录（2026-11-10，已接入）
+
+用户随后提供了带长期 API Key 的 Wind MCP HTTP 端点
+`https://mcp.wind.com.cn/vserver_wind_tools/mcp/`。**这与 8.1 所评的
+「Alice Market 个人订阅推文」不是同一通道**：一个是产品推广文，一个是可直连的
+工具型数据服务。对该端点做了协议握手、工具契约与真实取数核验：
+
+| 核验项 | 实测结论 |
+|--------|----------|
+| 协议 | stateless Streamable HTTP / JSON-RPC 2.0 / SSE；服务端 `wind-mcp-streamable-http-stateless v1.25.0` |
+| 工具暴露方式 | 仅 2 个元工具：`market_search_tools`（检索工具契约）+ `market_call_tool`（取数） |
+| 条件① 指数行情 | `get_index_kline` 支持 `begin_date/end_date/period/count`，一次取回区间日 K；实测返回 36 个交易日收盘价与成交额 |
+| **L2 ETF 总份额** | `fund_get_size` 提供 `f_unit_floortrading`（场内流通份额，份）、`f_unit_floortradingchange`（当日份额变化，份）、`f_unit_changedate`；7 只标的池全部有值 |
+| 历史回溯 | 按 `asOfDate` 逐日调用，实测 11-09 / 11-06 / 10-30 / 09-30 的份额与变化各不相同；非交易日回退到最近交易日，**以返回的份额变动日期为准** |
+| 净值与量能 | `fund_get_listed_historical_price` 的 `f_nav_iopv`（IOPV，净值口径）与 `f_dq_amount`（成交额，元） |
+| L1 十大流通股东 | **未命中专用明细工具**，保持空列表并标注缺口 |
+| L3 官方公告 | `get_company_announcements` 全文检索召回精度不足（实测返回国新中期票据募集说明书），**不用于自动确权** |
+| 更新频率 | ETF 份额为**日频（T+1）**，不是逐笔实时；指数快照可为盘中时点 |
+
+**结论修正**：8.1 中「免费行情无法覆盖 L2」的判断对 Alice Market 个人订阅推文
+依然成立；但用户提供的这个工具型 MCP 端点**确实覆盖了 L2 日频份额**，因此
+L2 已从「缺口」变为「已接入」，L1 / L3 仍是明确缺口。
+
+实现位于 `src/ntm/adapters/wind_mcp.py`：
+
+- 每日快照累积在 `data/wind_history.json`，刷新时只补抓缺失交易日。
+  原因是 `db.save_dataset` 为全量替换，若只取当日会清空历史序列、
+  导致 5 日跌幅与图表失效。
+- 所有数据先经 `datasource.validate_dataset` 校验（拒绝 demo 来源标记、
+  未来日期、可归因标记、行情字段顶替份额），通过后才入库。
+- 请求失败、字段缺失、解析异常一律抛 `LiveDataError` 停止采集，
+  **不降级回演示数据、不写入半份数据**。
+- `data/verified_announcements.json` 是 L3 唯一入口，且只接受人工核验记录；
+  系统不自动把新闻或公告标为 `is_supportive`，避免伪造确权信号。
 
 ---
 

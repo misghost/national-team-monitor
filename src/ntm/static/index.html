@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>国家队资金三层监控看板 · 演示数据</title>
+<title>国家队资金三层监控看板</title>
 <style>
 :root{
   --bg:#0f172a;
@@ -58,6 +58,7 @@ body{
   padding:3px 12px;border-radius:6px;white-space:nowrap;
 }
 .demo-banner .sub{font-size:12.5px;opacity:.97;line-height:1.5}
+.demo-banner.live{background:linear-gradient(90deg,#0f766e 0%,#0e7490 100%)}
 @media(max-width:760px){.demo-banner .inner{padding:9px 14px}.demo-banner .sub{font-size:11.5px}}
 
 /* ---------- 页头 ---------- */
@@ -298,14 +299,29 @@ main{flex:1 0 auto;width:100%}
 .strat-item .st-reason{font-size:11.5px;color:var(--ink-soft);line-height:1.7;margin-top:5px;padding-top:5px;border-top:1px dashed #e2e8f0}
 .strat-counts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .pool-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--ink-soft)}
+
+/* ---------- 数据源接入状态 ---------- */
+.ds-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px}
+.ds-badge{font-weight:700;font-size:13px;padding:4px 12px;border-radius:6px;color:#fff}
+.ds-demo{background:#dc2626}.ds-snap{background:#d97706}.ds-live{background:#059669}
+.ds-src{font-size:12px;color:var(--ink-soft)}
+.ds-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:900px){.ds-grid{grid-template-columns:1fr}}
+.ds-layer{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--card-soft)}
+.ds-layer-h{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px}
+.ds-ok{color:#059669;font-size:12px}.ds-off{color:#dc2626;font-size:12px}
+.ds-note{font-size:12px;line-height:1.6;color:var(--ink-soft)}
+.ds-fields{font-size:11px;color:var(--ink-soft);margin-top:6px;word-break:break-word}
+.ds-sec{margin-top:16px;font-size:13px}
+.ds-sec ul{margin:8px 0 0;padding-left:20px;font-size:12px;line-height:1.8;color:var(--ink-soft)}
 </style>
 </head>
 <body>
 
 <!-- 1. 演示数据警示条：常驻、醒目 -->
-<div class="demo-banner" role="alert">
+<div class="demo-banner" role="alert" id="data-banner">
   <div class="inner">
-    <span class="mark">演示数据 · 不可用于实盘决策</span>
+    <span class="mark" id="data-banner-mark">演示数据 · 不可用于实盘决策</span>
     <span class="sub">本系统所有判断均为基于公开数据的概率推断，无法确权，不构成投资建议；本看板不提供任何个股操作建议，仅输出「托底信号状态」。</span>
   </div>
 </div>
@@ -331,6 +347,15 @@ main{flex:1 0 auto;width:100%}
 
 <main>
 <div class="wrap">
+
+  <!-- 1.5 数据源接入状态：真实 / 演示必须可区分 -->
+  <section class="block">
+    <div class="block-head">
+      <h2>数据源接入状态</h2>
+      <span class="desc">真实与演示严格区分；接入缺口、字段口径与外部数据源核查结论</span>
+    </div>
+    <div class="card" id="datasource-box"><span class="muted">正在加载数据源状态…</span></div>
+  </section>
 
   <!-- 2. 信号状态卡片 -->
   <section class="block">
@@ -508,7 +533,7 @@ main{flex:1 0 auto;width:100%}
 <!-- 8. 页脚固定免责声明 -->
 <footer class="site-footer">
   <div class="footer-inner">
-    <div class="f-title">免责声明 · 演示数据 · 不可用于实盘决策</div>
+    <div class="f-title" id="footer-title">免责声明 · 演示数据 · 不可用于实盘决策</div>
     <div class="f-line" id="footer-disclaimer">本系统所有判断均为基于公开数据的概率推断，无法确权，不构成投资建议。</div>
     <div class="f-line">公开数据无法日频归因到具体主体；L2 估算仅为全市场一级市场净申购口径，无法识别申购人；所有信号均为「推断，非实锤」，无法确认买方身份。</div>
     <div class="f-line">本看板不提供任何个股操作建议，仅输出「托底信号状态」；名单进出 ≠ 增减持。</div>
@@ -532,7 +557,8 @@ main{flex:1 0 auto;width:100%}
     signals:'/api/signals?days=90',
     announcements:'/api/announcements?limit=10',
     holdings:'/api/holdings?limit=20',
-    methodology:'/api/methodology'
+    methodology:'/api/methodology',
+    datasource:'/api/datasource'
   };
   var UP = '#ef4444', DOWN = '#10b981';
   var CONF_LABEL = { high:'高', medium:'中', low:'低' };
@@ -1154,20 +1180,93 @@ main{flex:1 0 auto;width:100%}
       + '</tr></thead><tbody>' + bodyRows + '</tbody></table>';
   }
 
+  /* ============ 渲染：数据源接入状态 ============ */
+  function renderDataSource(res){
+    var box = $('datasource-box'); if(!box) return;
+    var p = payload(res);
+    if(!p){ box.innerHTML = '<span class="muted">数据源状态不可用</span>'; return; }
+    var cls = p.mode === 'demo' ? 'ds-demo' : (p.mode === 'live' ? 'ds-live' : 'ds-snap');
+    var html = '<div class="ds-top">' +
+      '<span class="ds-badge ' + cls + '">' + h(p.mode_label) + '</span>' +
+      '<span class="ds-src">数据集来源：' + h(p.dataset_source || 'unknown') + '</span>' +
+      '<span class="ds-src">基准日：' + h(p.dataset_as_of || '—') + '</span>' +
+      '<span class="ds-src">份额数据最新日期：' + h(p.data_latest_date || '—') + '</span>' +
+      '<span class="ds-src">刷新：每交易日盘后自动 + 手动即时</span>' +
+      '<span class="ds-src">凭据已配置：' + (p.credential_configured ? '是' : '否') +
+      ' · 端点已配置：' + (p.endpoint_configured ? '是' : '否') + '</span>' +
+      '</div>';
+    html += '<div class="ds-grid">';
+    (p.layers || []).forEach(function(L){
+      html += '<div class="ds-layer">' +
+        '<div class="ds-layer-h"><b>' + h(L.layer) + '</b>' +
+        (L.connected ? '<span class="ds-ok">已接入</span>' : '<span class="ds-off">未接入</span>') +
+        '</div>' +
+        '<div class="ds-note">' + h(L.note) + '</div>' +
+        '<div class="ds-fields">当前记录数：' + (L.records || 0) + '</div>' +
+        '<div class="ds-fields">必需字段：' + h((L.required_fields || []).join(' / ')) + '</div>' +
+        '<div class="ds-fields">可归因到主体：' + (L.attributable ? '是（L1 季度确权）' : '否') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    html += '<div class="ds-sec"><b>接入缺口与前置条件</b><ul>';
+    (p.gaps || []).forEach(function(g){ html += '<li>' + h(g) + '</li>'; });
+    html += '</ul></div>';
+    var w = p.wind_alice_review || {};
+    html += '<div class="ds-sec"><b>关于「Wind Alice Market」推文的核查结论</b>' +
+      '<div class="ds-note">' + h(w.verdict || '') + '</div>' +
+      '<div class="ds-fields">推文性质：' + h(w.what_it_is || '') +
+      ' · 凭据：' + h(w.credential || '') + '</div><ul>';
+    (w.gaps_for_this_platform || []).forEach(function(g){ html += '<li>' + h(g) + '</li>'; });
+    html += '</ul></div>';
+    var m = p.wind_mcp || {};
+    if (m.status){
+      html += '<div class="ds-sec"><b>Wind MCP 接入实况</b>' +
+        '<div class="ds-note">' + h(m.status) + ' · 核验日期 ' + h(m.verified_at || '') + '</div>' +
+        '<div class="ds-fields">协议：' + h(m.protocol || '') + '</div>' +
+        '<div class="ds-fields">L2 字段：' + h(m.l2_field || '') + '</div><ul>';
+      var tools = m.tools || {};
+      Object.keys(tools).forEach(function(k){ html += '<li>' + h(k) + '：' + h(tools[k]) + '</li>'; });
+      html += '<li>' + h(m.l1_gap || '') + '</li>' +
+              '<li>' + h(m.l3_policy || '') + '</li>' +
+              '<li>' + h(m.refresh || '') + '</li>' +
+              '<li>' + h(m.note || '') + '</li></ul></div>';
+    }
+    html += '<div class="ds-sec"><b>铁律（接入真实数据后依然成立）</b><ul>';
+    (p.iron_rules || []).forEach(function(r){ html += '<li>' + h(r) + '</li>'; });
+    html += '</ul><div class="ds-note">' + h(p.attribution_note || '') + '</div></div>';
+    box.innerHTML = html;
+  }
+
   /* ============ 渲染：页头 / 连接状态 / 页脚 ============ */
   function renderHeaderAndFooter(R){
     var ov = payload(R.overview);
     var hp = payload(R.health);
     var online = !!(ov || hp);
 
-    $('as-of').textContent = ov && ov.as_of ? ('数据日期：' + ov.as_of) : '数据日期：不可用';
     var isDemo = ov ? ov.is_demo : (hp ? hp.is_demo : true);
-    $('demo-chip').textContent = !online ? '离线预览' : (isDemo === false ? '非演示数据' : '演示数据');
+    var live = (isDemo === false);
+    var dsp = payload(R.datasource);
+    var latest = (dsp && dsp.data_latest_date) ? dsp.data_latest_date
+               : (ov && ov.as_of ? ov.as_of : '');
+    $('as-of').textContent = latest
+      ? (live ? '份额数据日期：' + latest : '数据日期：' + latest)
+      : '数据日期：不可用';
+    $('demo-chip').textContent = !online ? '离线预览' : (live ? '真实数据' : '演示数据');
+
+    var banner = $('data-banner'), mark = $('data-banner-mark');
+    if(banner && mark && online){
+      banner.className = live ? 'demo-banner live' : 'demo-banner';
+      mark.textContent = live ? '真实数据 · 概率推断，不可确权' : '演示数据 · 不可用于实盘决策';
+    }
+    var ft = $('footer-title');
+    if(ft) ft.textContent = live
+      ? '免责声明 · 真实数据（公开数据概率推断）· 不构成投资建议'
+      : '免责声明 · 演示数据 · 不可用于实盘决策';
 
     var badge = $('conn-badge'), txt = $('conn-text');
     if(online){
       badge.className = 'conn-badge ok';
-      txt.textContent = '后端已连接 · 演示模式';
+      txt.textContent = '后端已连接 · ' + (live ? '真实数据' : '演示模式');
     } else {
       badge.className = 'conn-badge bad';
       txt.textContent = '无法连接后端 · 离线预览';
@@ -1178,13 +1277,14 @@ main{flex:1 0 auto;width:100%}
       $('footer-disclaimer').textContent = ov.disclaimer;
     }
     var ver = hp && hp.version ? (' · 后端版本 ' + hp.version) : '';
-    $('footer-meta').textContent = '国家队资金三层监控看板 · 静态演示页面' + ver
+    $('footer-meta').textContent = '国家队资金三层监控看板 · '
+      + (live ? '真实数据服务' : '静态演示页面') + ver
       + ' · 所有信号均为推断、非实锤，无法确权';
   }
 
   /* ============ 启动：Promise.all 并发 ============ */
   function boot(){
-    var keys = ['health','overview','etf','etfpool','momentum','strategy','signals','announcements','holdings','methodology'];
+    var keys = ['health','overview','etf','etfpool','momentum','strategy','signals','announcements','holdings','methodology','datasource'];
     var requests;
     try {
       requests = keys.map(function(k){ return safeFetch(API[k]); });
@@ -1196,6 +1296,7 @@ main{flex:1 0 auto;width:100%}
       keys.forEach(function(k,i){ R[k] = results[i] || { ok:false, error:'无响应' }; });
 
       guard('header/footer', function(){ renderHeaderAndFooter(R); });
+      guard('datasource', function(){ renderDataSource(R.datasource); });
       guard('signal', function(){ renderSignal(R.overview); });
       guard('layers', function(){ renderLayers(R.overview); });
       guard('methodology', function(){ renderMethodology(R.methodology); });

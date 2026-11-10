@@ -1,7 +1,16 @@
-# 不用容器时：由系统 cron 每交易日盘后刷新（16:30，周一至周五）
-# 安装：crontab deploy/crontab.example
-# 注意：此表达式只按周一至周五运行，法定节假日仍需人工/交易日历过滤。
+# 每交易日盘后刷新（16:30，周一至周五）；法定节假日仍需交易日历过滤。
+#
+# 推荐安装为 /etc/cron.d/ntm-refresh（可指定运行用户，且不触碰已有 crontab）：
+#   sudo cp deploy/crontab.example /etc/cron.d/ntm-refresh
+#   sudo chown root:root /etc/cron.d/ntm-refresh && sudo chmod 644 /etc/cron.d/ntm-refresh
+#
+# 为什么走 HTTP API 而不是 `python -m ntm refresh`：
+#   cron 不会自动加载 /opt/national-team-monitor/.env，直接跑 CLI 会丢失
+#   NTM_DATA_API_KEY 等凭据并触发「失败即停」；而 ntm.service 已通过
+#   EnvironmentFile 加载 .env，调 API 复用同一进程环境，凭据一定正确。
+#
+# 以 ntm 用户运行，日志写入项目 data 目录（该目录 ntm 可写）。
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-30 16 * * 1-5 cd /opt/national-team-monitor && PYTHONPATH=src .venv/bin/python -m ntm refresh >> /var/log/ntm-refresh.log 2>&1
+30 16 * * 1-5 ntm /usr/bin/curl -fsS --max-time 300 -X POST http://127.0.0.1:8000/api/refresh >> /opt/national-team-monitor/data/refresh.log 2>&1

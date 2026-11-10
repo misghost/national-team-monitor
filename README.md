@@ -155,6 +155,62 @@ python3 -m ntm check     # 自检：含标的池与量能中性约束
 | `GET /api/etf/pool` | 7 只标的池、未确权参考观点、校验结果 |
 | `GET /api/etf/momentum?day=YYYY-MM-DD` | 成交额/环比/放量倍数/份额对照、量能汇总（`is_signal=false`） |
 | `GET /api/reference/strategy` | 参考策略原文与逐条实现取舍 |
+| `GET /api/datasource` | 真实/演示数据源状态、三层字段契约、接入缺口、外部数据源核查结论（不返回任何凭据值） |
+
+### 真实数据接入
+
+默认仍是演示数据，**系统不会把合成数据标成真实数据**。两种适配器：
+
+| 适配器 | 开关 | 状态 |
+|---|---|---|
+| `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp` | 已实现并实测核验 |
+| `src/ntm/adapters/live.py` | 留空 | 通用 HTTP/JSON 端点，由接入方按契约自行实现 |
+
+#### Wind MCP（2026-11-10 实测核验）
+
+在 `.env` 中配置后重启服务，再执行 `POST /api/refresh` 立即取数：
+
+```ini
+NTM_DEMO_MODE=0
+NTM_ENABLE_LIVE_ADAPTERS=1
+NTM_DATA_SOURCE=wind_mcp
+NTM_DATA_ENDPOINT=https://mcp.wind.com.cn/vserver_wind_tools/mcp/
+NTM_DATA_API_KEY=<Wind 后台生成的长期 API Key>
+NTM_DATA_VERIFIED=1
+NTM_WIND_BACKFILL_DAYS=12
+NTM_WIND_KLINE_DAYS=120
+```
+
+字段映射与已知边界：
+
+- `get_index_kline` → 沪深300日K → 收盘价、1日/5日涨跌幅、成交额（条件①）
+- `fund_get_size` → **场内流通份额** `f_unit_floortrading` → `total_share`，
+  当日份额变化 `f_unit_floortradingchange` → `share_change`。这是 L2 核心，
+  日频且可按 `asOfDate` 回溯；**绝不用成交额或资金流顶替份额**
+- `fund_get_listed_historical_price` → IOPV → `nav`，成交额 → `amount_yi`（量能观测）
+- `db.save_dataset` 是全量替换，适配器把每日快照累积在 `data/wind_history.json`，
+  刷新时只补抓缺失交易日，避免清空历史序列导致图表与 5 日跌幅失效
+- **L1**：Wind MCP 无十大流通股东明细工具，保持空列表并显式标注缺口
+- **L3**：官方公告不自动确权，仅从 `data/verified_announcements.json` 读取
+  人工核验记录（格式见 `deploy/verified_announcements.example.json`）；
+  文件不存在即为空，三重共振不会因新闻误触发。`is_supportive` 必须由人工
+  核对官方原文后填写，系统不根据标题或新闻推断
+- ETF 份额为 **T+1 日频**而非逐笔实时；数据日期以 Wind 返回的份额变动日期为准
+
+定时刷新按 `deploy/crontab.example` 部署到 `/etc/cron.d/`。**必须走 HTTP API**：
+cron 直接跑 CLI 不会加载 `.env`，会丢失凭据并触发「失败即停」。
+
+#### 通用契约（两种适配器都适用）
+
+1. 完成 `docs/METHODOLOGY.md` 第八节核验清单并留档；
+2. 数据源需返回 `market / etf / announcements / holdings` 四层，`etf` 必须含
+   **ETF 总份额 `total_share`** 与净值；
+3. 通过 `datasource.validate_dataset` 校验闸门（拒绝 demo 来源标记、未来日期、
+   可归因标记、用行情字段顶替份额）；
+4. 任何请求失败或校验不通过都抛错停止，**绝不降级回演示数据**。
+
+凭据只从环境变量读取，不落盘、不打印、不进入日志。`GET /api/datasource`
+可随时查看当前模式、各层真实记录数与缺口。
 
 完整契约见 `docs/DATA_DICTIONARY.md`。
 

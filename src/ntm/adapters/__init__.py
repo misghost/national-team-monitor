@@ -18,6 +18,10 @@ def get_adapter(demo: bool | None = None) -> BaseAdapter:
             "NTM_DEMO_MODE=0 但 NTM_ENABLE_LIVE_ADAPTERS 未开启，"
             "且真实数据源尚未核验。请保持演示模式，或完成接入核验后显式启用。"
         )
+    if config.data_source() == "wind_mcp":
+        from .wind_mcp import WindMCPAdapter
+
+        return WindMCPAdapter()
     return LiveETFShareAdapter()
 
 

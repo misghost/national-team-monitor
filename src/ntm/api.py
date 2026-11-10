@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alert, backtest, config, db, layers
+from . import alert, backtest, config, db, datasource, layers
 from .adapters import get_adapter
 from .entities import as_dict as entities_as_dict
 from .etf_pool import POOL_CAVEAT, claims_as_dict, pool_as_dict, validate_pool
@@ -118,6 +118,15 @@ def etf_momentum(day: str | None = Query(None)) -> dict:
 def reference_strategy() -> dict:
     """参考策略原文存档与逐条实现取舍（含不实现项的合规理由）。"""
     return REFERENCE_STRATEGY.as_dict()
+
+
+@app.get("/api/datasource")
+def datasource_status() -> dict:
+    """真实/演示数据源接入状态、各层字段契约与缺口。
+
+    只返回「凭据是否已配置」的布尔值，绝不返回任何凭据内容。
+    """
+    return datasource.current_status()
 
 
 @app.get("/api/signals")

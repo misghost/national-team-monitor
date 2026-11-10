@@ -44,6 +44,44 @@ ALERT_MAX_PER_DAY = int(os.getenv("NTM_ALERT_MAX_PER_DAY", "3"))
 VOLUME_SPIKE_MULTIPLE = float(os.getenv("NTM_VOLUME_SPIKE_MULTIPLE", "2.0"))
 VOLUME_MA_WINDOW = int(os.getenv("NTM_VOLUME_MA_WINDOW", "5"))
 
+# ---- 真实数据源（默认禁用；端点与凭据必须由接入方提供） ----
+# 凭据只从环境变量读取，不落盘、不打印、不写入日志或报告。
+def data_endpoint() -> str:
+    return os.getenv("NTM_DATA_ENDPOINT", "").strip()
+
+
+def data_api_key() -> str:
+    return os.getenv("NTM_DATA_API_KEY", "").strip()
+
+
+def data_verified() -> bool:
+    """是否已完成 docs/METHODOLOGY.md 第八节核验清单。"""
+    return os.getenv("NTM_DATA_VERIFIED", "0").strip().lower() in {"1", "true", "yes"}
+
+
+DATA_TIMEOUT = int(os.getenv("NTM_DATA_TIMEOUT", "10"))
+DATA_MIN_INTERVAL = float(os.getenv("NTM_DATA_MIN_INTERVAL", "1.0"))
+
+
+# ---- Wind MCP 适配器（data_source=wind_mcp 时生效）----
+def data_source() -> str:
+    """真实数据源类型；空字符串表示未选择（使用通用 HTTP 适配器）。"""
+    return os.getenv("NTM_DATA_SOURCE", "").strip().lower()
+
+
+def wind_backfill_days() -> int:
+    """单次刷新最多补抓的交易日数，控制 Wind 调用次数与配额。"""
+    return max(1, int(os.getenv("NTM_WIND_BACKFILL_DAYS", "12")))
+
+
+def wind_kline_days() -> int:
+    """指数历史 K 线回溯自然日数（用于计算 5 日涨跌幅与画图）。"""
+    return max(30, int(os.getenv("NTM_WIND_KLINE_DAYS", "120")))
+
+
+WIND_MCP_TIMEOUT = int(os.getenv("NTM_WIND_TIMEOUT", "25"))
+WIND_MCP_MIN_INTERVAL = float(os.getenv("NTM_WIND_MIN_INTERVAL", "0.4"))
+
 # 核心宽基 ETF 观察池：7 只，结构化定义见 etf_pool.py。
 # 保留 (code, name) 二元组形式以兼容既有 demo 适配器与数据契约。
 from .etf_pool import ETF_POOL as _ETF_POOL  # noqa: E402  避免模块级循环导入

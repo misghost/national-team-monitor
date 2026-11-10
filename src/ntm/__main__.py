@@ -109,6 +109,11 @@ def cmd_check(_args) -> int:
         if word in MOMENTUM_CAVEAT + probe.observation:
             problems.append(f"量能输出含交易指令措辞：{word}")
 
+    # 9. 真实数据闸门：合成演示数据不得被当作合规真实数据
+    from .datasource import validate_dataset
+    if not validate_dataset(get_adapter(demo=True).fetch().dataset, "2026-11-09"):
+        problems.append("真实数据闸门失效：演示数据集被误判为合规真实数据")
+
     if problems:
         for p in problems:
             print(f"[FAIL] {p}", file=sys.stderr)
