@@ -5,10 +5,21 @@
 > **L1 实测 / L2 估算 / L3 代理**三层，输出**带置信度、明确标注「推断非实锤」**的
 > 托底信号，供人工判断「是否进场、仓位怎么摆」。
 
-本项目由《A股国家队资金监控与择时平台 · 开发提示词整理文档》经
-[完备性与精准性研判](../A股国家队资金监控平台_开发提示词_完备性与精准性研判.md)
-修订后落地实现。修订版提示词全文见 [`docs/REVISED_PROMPT.md`](docs/REVISED_PROMPT.md)，
-方法论见 [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)。
+本项目由《A股国家队资金监控与择时平台 · 开发提示词整理文档》经完备性与精准性研判
+修订后落地实现：原版「实时跟踪交易行为」「个股层面加仓机会筛选」等不成立的承诺已删除，
+逐条对照见 [`docs/REVISED_PROMPT.md`](docs/REVISED_PROMPT.md)，方法论见
+[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)。
+
+### 📚 文档导航
+
+| 想做什么 | 读哪份 |
+|---|---|
+| **完整掌握整个项目** | [`docs/COMPLETE_GUIDE.md`](docs/COMPLETE_GUIDE.md) — 方法论、架构、配置、API、真实数据接入、部署、运维、排错 |
+| 查字段 / 接口返回体 | [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) |
+| 改判定逻辑 / 接数据源 | [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) |
+| 核对「某条规则为什么没实现」 | [`docs/REFERENCE_STRATEGY.md`](docs/REFERENCE_STRATEGY.md) |
+| 部署到服务器 | [`deploy/README.md`](deploy/README.md) |
+| 凭据与漏洞报告 | [`SECURITY.md`](SECURITY.md) |
 
 ---
 
@@ -26,7 +37,7 @@ PYTHONPATH=src python3 -m ntm serve
 
 ```bash
 PYTHONPATH=src python3 -m ntm check     # 自检：实体去重/PIT/信号铁律
-python3 -m pytest tests/ -q             # 37 项测试
+python3 -m pytest -q                    # 95 项测试
 curl http://localhost:8000/api/health
 ```
 
@@ -109,24 +120,30 @@ national-team-monitor/
 │   ├── entities.py         # 主体清单 + 别名归一化（修正证金重复、排除中投）
 │   ├── etf_pool.py         # 7 只宽基 ETF 标的池、159845 修正、未确权观点隔离
 │   ├── momentum.py         # 环比/放量倍数/量能汇总（纯函数，恒非信号）
-│   ├── reference.py        # 参考策略原文存档与逐条实现取舍
-│   ├── layers.py           # 三层模型、术语表、四个陷阱、噪音清单
+│   ├── reference.py        # 参考策略原文存档与 17 条实现取舍
+│   ├── layers.py           # 三层模型、术语表、陷阱、噪音清单
 │   ├── cleaning.py         # 名单进出≠增减持 / 复权 / PIT 防前视
 │   ├── signals.py          # 三重共振状态机 + 未确权铁律
+│   ├── datasource.py       # 真实数据集校验闸门 + 数据源状态
 │   ├── db.py               # SQLite 存储与查询（含旧库迁移、量能查询）
 │   ├── backtest.py         # 防前视回测 + 基准对照
 │   ├── alert.py            # 企业微信/邮件/站内预警（去重降噪、频率上限）
-│   ├── scheduler.py        # 每交易日盘后刷新
-│   ├── api.py              # FastAPI 接口 + 静态页
-│   ├── adapters/           # demo（默认）/ live（骨架，默认禁用）
+│   ├── scheduler.py        # 刷新编排 / 信号重算 / 历史快照累积
+│   ├── api.py              # FastAPI 14 个接口 + 静态页
+│   ├── adapters/
+│   │   ├── demo.py         # 默认合成演示数据
+│   │   ├── live.py         # 通用 HTTP 适配器（配置驱动，失败即停）
+│   │   └── wind_mcp.py     # Wind MCP 真实数据适配器（已实测核验）
 │   └── static/index.html   # 单页看板
-├── tests/                  # 59 项测试
-├── docs/                   # 修订版提示词 / 方法论 / 数据字典 / 参考策略存档
-├── deploy/                 # 部署脚本、Nginx、systemd、crontab
-├── scripts/                # GitHub 推送（git 与 API 双路径）
+├── tests/                  # 95 项测试
+├── docs/                   # 完整说明书 / 方法论 / 数据字典 / 参考策略 / 修订提示词
+├── deploy/                 # 部署脚本、Nginx、systemd、crontab、L3 确权模板
+├── scripts/                # GitHub 推送（git/API 双路径）、GitCode/Gitee 推送
 ├── Dockerfile / docker-compose.yml
 └── .github/workflows/ci.yml
 ```
+
+完整的模块职责、数据流图与配置说明见 [`docs/COMPLETE_GUIDE.md`](docs/COMPLETE_GUIDE.md)。
 
 ---
 
@@ -146,16 +163,28 @@ python3 -m pytest tests/ -q
 python3 -m ntm check     # 自检：含标的池与量能中性约束
 ```
 
-### 主要接口
+### 全部接口（14 个）
 
-除原有 `/api/overview`、`/api/etf/shares`、`/api/signals` 等外，本版新增：
+服务启动后访问 `/docs` 可看交互式 OpenAPI 文档。完整返回体契约见
+[`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) 与
+[`docs/COMPLETE_GUIDE.md`](docs/COMPLETE_GUIDE.md) 第 6 节。
 
-| 接口 | 返回 |
-|---|---|
-| `GET /api/etf/pool` | 7 只标的池、未确权参考观点、校验结果 |
-| `GET /api/etf/momentum?day=YYYY-MM-DD` | 成交额/环比/放量倍数/份额对照、量能汇总（`is_signal=false`） |
-| `GET /api/reference/strategy` | 参考策略原文与逐条实现取舍 |
-| `GET /api/datasource` | 真实/演示数据源状态、三层字段契约、接入缺口、外部数据源核查结论（不返回任何凭据值） |
+| 方法 | 接口 | 返回 |
+|---|---|---|
+| GET | `/api/health` | 状态、版本、`is_demo` |
+| GET | `/api/overview` | 最新信号 + 三层定义 + 免责声明 |
+| GET | `/api/etf/shares?days=30` | ETF 份额时间序列 |
+| GET | `/api/etf/pool` | 7 只标的池、未确权参考观点、校验结果 |
+| GET | `/api/etf/momentum?day=YYYY-MM-DD` | 成交额/环比/放量倍数/份额对照（`is_signal=false`） |
+| GET | `/api/reference/strategy` | 参考策略原文与 17 条实现取舍 |
+| GET | `/api/datasource` | 真实/演示状态、三层字段契约、接入缺口（不返回凭据值） |
+| GET | `/api/signals?days=90` | 历史信号 |
+| GET | `/api/announcements?limit=10` | 公告列表 |
+| GET | `/api/holdings?limit=20` | 季度持仓 |
+| GET | `/api/methodology` | 三层、术语、陷阱、噪音、主体清单 |
+| GET | `/api/backtest?horizon=20` | 防前视回测 |
+| GET | `/api/alerts` | 预警状态 |
+| POST | `/api/refresh` | 立即刷新并重算信号（并发时 409） |
 
 ### 真实数据接入
 
@@ -253,64 +282,52 @@ export DOMAIN=""                    # 可选，配置了才启用 Nginx 反代
 
 ---
 
-## 推送 GitHub
+## 推送到代码托管平台
 
-**方式 A（推荐）**：在 CodeBuddy 设置页 →「连接器」→ 授权 GitHub，然后直接：
+### GitHub（推荐 classic PAT）
 
-```bash
-./scripts/push_github.sh
-```
-
-> **连接器令牌的已知限制**：GitHub 连接器返回的是 GitHub App 用户令牌，
-> 实测 `POST /user/repos`（新建个人仓库）返回 403
-> `Resource not accessible by integration`，所需权限为
-> `administration=write; repository_creation=write`，该类令牌默认不具备。
-> 但它对**已存在的仓库**有完整写权限（实测 `push=True`）。因此使用连接器时需先在
-> GitHub 网页创建一个**空仓库**（不勾选 README / .gitignore / License），
-> 脚本会自动识别「仓库已存在」并跳过创建、直接推送：
->
-> `https://github.com/new?name=national-team-monitor&visibility=public`
->
-> 若改用具备 `repo` 权限的 classic PAT，则无需预建仓库，脚本可全自动建仓并推送。
-
-**方式 B**：自带 Personal Access Token（需 `repo` 权限；fine-grained 需
-Contents 读写 + Metadata 只读）。推荐用**凭据文件**，令牌不会出现在命令文本里：
+需要**具备 `repo` 权限的 classic PAT（`ghp_`）**。推荐用凭据文件，令牌不会出现在命令文本里：
 
 ```bash
-# token.txt 仅一行令牌，权限建议 600，用完即删
+# token.txt 仅一行令牌，权限 600，用完即删
 GITHUB_TOKEN_FILE=/path/to/token.txt ./scripts/push_github.sh
-
-# 或直接走环境变量（令牌会出现在命令文本中）
+# 或（令牌会出现在命令文本中）
 GITHUB_TOKEN=ghp_xxx ./scripts/push_github.sh
 ```
 
 可选环境变量：`GITHUB_REPO`（默认 `national-team-monitor`）、`GITHUB_OWNER`
-（默认取 token 所属用户）、`GITHUB_PRIVATE=1`（创建私有仓库）、
-`GITHUB_PATH_PREFIX`（仓库内子目录）、`GITHUB_BRANCH`（默认 `main`）。
-凭据优先级：`GITHUB_TOKEN` → `GITHUB_TOKEN_FILE` → GitHub 连接器 OAuth。
+（默认取令牌所属用户）、`GITHUB_PRIVATE=1`、`GITHUB_PATH_PREFIX`（仓库内子目录）、
+`GITHUB_BRANCH`（默认 `main`）。凭据优先级：
+`GITHUB_TOKEN` → `GITHUB_TOKEN_FILE` → GitHub 连接器 OAuth。
 
-脚本执行 5 步：本地提交 → 取凭据 → 身份确认 → 推送 → 输出地址。推送路径自动选择：
+脚本执行 5 步：本地提交 → 取凭据 → 身份确认 → 推送 → 输出地址，推送路径自动选择：
 
-1. **REST API 单提交**（优先）：`api.github.com` 认证通过时，用
-   `scripts/push_via_api.py` 经 Git Data API 自动创建/复用仓库并一次提交全部文件；
-   不依赖 git 协议、`gh` 登录或预建仓库。
-2. **git 协议子目录推送**（API 写权限不足时自动降级）：部分令牌（如 GitHub App
-   用户到服务器令牌 `ghu_`）无 `contents=write` 权限，Git Data API / Contents API
-   均返回 403。此时改用 `scripts/push_via_git.py`：浅克隆 → 复制文件到子目录 →
-   校验原有文件字节级零改动 → 单次提交 → 带重试推送。git 推送前使用
-   `oauth2:<token>` 的 Basic 认证与 HTTP/1.1（实测 `x-access-token` 格式与 HTTP/2 均超时）。
+1. **REST API 单提交**（优先）：`scripts/push_via_api.py` 经 Git Data API
+   自动创建/复用仓库并一次提交全部文件，不依赖 git 协议或预建仓库。
+2. **git 协议子目录推送**（API 写权限不足时降级）：`scripts/push_via_git.py`
+   浅克隆 → 复制到子目录 → 校验原有文件字节级零改动 → 单次提交 → 带重试推送。
 3. **复用已有仓库**：`GITHUB_REPO=lpp GITHUB_PATH_PREFIX=national-team-monitor
-   ./scripts/push_github.sh` 会把项目写入 `lpp` 的 `national-team-monitor/` 子目录，
-   仓库根下原有文件保持不动；同名路径冲突时原内容自动备份到 `_backup_before_push/`。
+   ./scripts/push_github.sh` 把项目写入 `lpp` 的子目录，根下原有文件保持不动；
+   同名路径冲突时原内容备份到 `_backup_before_push/`。
 
-> **写权限的硬约束**：GitHub 连接器返回的是 `ghu_` 用户到服务器令牌，`contents`
-> 权限由 App 注册时固定，用户授权时无法提升。实测 Git Data API、Contents API、
-> `git push` 三条写通道均要求 `contents=write`。因此完成推送需要：
-> **具备 `repo` 权限的 classic PAT（`ghp_`）**，或由 App 方开放写权限的连接器。
-> 仅有读权限时脚本会明确报错退出，不会静默成功或虚构线上地址。
+> **写权限的硬约束**：GitHub 连接器返回的是 `ghu_` 用户到服务器令牌，
+> 实测 `POST /user/repos`、Git Data API、Contents API、`git push` 四条写通道
+> 均要求 `contents=write`，而该类令牌由 App 注册时固定、用户授权无法提升。
+> 因此推送需要 `ghp_` classic PAT，或由 App 方开放写权限的连接器。
+> 仅有读权限时脚本以退出码 2 明确报错退出，不会静默成功或虚构线上地址。
 
-凭据只经环境变量与命令替换传递，**不打印、不写入 `.git/config`、不进版本库**。
-未授权时脚本以退出码 2 明确停止并打印诊断，不会静默成功或虚构线上地址。
+### GitCode / Gitee
+
+```bash
+GITCODE_TOKEN=<令牌> python3 scripts/push_gitcode.py --platform gitcode
+GITEE_TOKEN=<令牌>   python3 scripts/push_gitcode.py --platform gitee
+```
+
+令牌也可放在 `~/.gitcode_token` / `~/.gitee_token`（权限须 600）。
+脚本先校验令牌与身份，仓库不存在才创建，推送后立即清除 remote 中的凭据。
+
+**凭据只经环境变量与命令替换传递，不打印、不写入 `.git/config`、不进版本库。**
+详见 [`SECURITY.md`](SECURITY.md)。
 
 ---
 
