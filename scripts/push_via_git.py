@@ -119,51 +119,78 @@ def main() -> int:
                   file=sys.stderr)
             return 3
 
-        print("[3/6] 复制项目文件")
+        print("[3/6] 备份同名文件并复制项目文件")
         dest = repo / prefix if prefix else repo
         dest.mkdir(parents=True, exist_ok=True)
         files = collect_files()
+
+        # 无子目录时，同名文件必须在覆盖「之前」备份，且用 before 中记录的
+        # 原始字节写盘；否则备份到的会是被覆盖后的新内容，原内容真实丢失。
+        backed_up: set[str] = set()
+        if not prefix:
+            backups = repo / "_backup_before_push"
+            for rel, _ in files:
+                if rel in before:
+                    bk = backups / rel
+                    bk.parent.mkdir(parents=True, exist_ok=True)
+                    bk.write_bytes(before[rel])
+                    backed_up.add(rel)
+            if backed_up:
+                print(f"      同名文件原内容已备份至 _backup_before_push/：{sorted(backed_up)}")
+
         for rel, src in files:
             out = dest / rel
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, out)
         print(f"      已复制 {len(files)} 个文件（与版本库口径一致）")
 
-        # 无子目录时，同名文件先备份，避免覆盖原有内容
-        if not prefix:
-            backups = repo / "_backup_before_push"
-            for rel, _ in files:
-                orig = repo / rel
-                if orig.is_file() and rel in before:
-                    bk = backups / rel
-                    bk.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(orig, bk)
-            if backups.exists():
-                print("      同名文件已备份至 _backup_before_push/")
-
         git(["add", "-A"], cwd=repo)
         # 用暂存区判定变更，不依赖 HEAD~1（浅克隆下不存在）
         staged = git(["diff", "--cached", "--name-status"], cwd=repo).stdout
-        touched = {ln.split("\t", 1)[1] for ln in staged.splitlines() if "\t" in ln}
-        status = {ln.split("\t", 1)[0] for ln in staged.splitlines() if "\t" in ln}
-        if not touched:
+        entries = [ln.split("\t", 1) for ln in staged.splitlines() if "\t" in ln]
+        if not entries:
             print("      无文件变更，跳过提交")
             return 0
 
         print("[4/6] 校验原有文件零改动")
-        # 除新增外不允许修改/删除/重命名任何已有路径
-        non_add = sorted(s for s in status if s and not s.startswith("A"))
-        violated = sorted(p for p in touched if p in before) + non_add
-        for name, blob in before.items():
-            cur = repo / name
-            if not cur.is_file() or cur.read_bytes() != blob:
-                violated.append(name)
+        # 子目录模式：根目录原有文件必须字节级不变，任何非 A 变更都违规。
+        # 根目录模式：仅允许覆盖「已备份原内容」的同名文件（预期行为），
+        #   其余已有文件的修改/删除一律拒绝。
+        violated: list[str] = []
+        for code, path in entries:
+            if code.startswith("A"):
+                continue
+            if not prefix and path in backed_up:
+                continue  # 已备份的预期覆盖
+            violated.append(f"{code}:{path}")
+
+        if prefix:
+            for name, blob in before.items():
+                cur = repo / name
+                if not cur.is_file() or cur.read_bytes() != blob:
+                    violated.append(name)
+        else:
+            for name, blob in before.items():
+                if name in backed_up:
+                    bk = repo / "_backup_before_push" / name
+                    if not bk.is_file() or bk.read_bytes() != blob:
+                        violated.append(f"备份缺失或不一致:{name}")
+                else:
+                    cur = repo / name
+                    if not cur.is_file() or cur.read_bytes() != blob:
+                        violated.append(name)
+
         if violated:
             print(f"[ERROR] 原有文件将被改动，已中止推送：{sorted(set(violated))}",
                   file=sys.stderr)
             return 5
-        print(f"      ✓ 根目录 {len(before)} 个原有文件字节级未变；"
-              f"本次新增 {len(touched)} 个路径，全部为 A（新增）")
+        if prefix:
+            print(f"      ✓ 根目录 {len(before)} 个原有文件字节级未变；"
+                  f"本次新增 {len(entries)} 个路径")
+        else:
+            print(f"      ✓ 未备份的原有文件字节级未变；"
+                  f"{len(backed_up)} 个同名文件原内容已备份后覆盖；"
+                  f"共 {len(entries)} 个变更")
 
         commit = git(["-c", "user.name=NTM Bot", "-c", "user.email=ntm-bot@localhost",
                       "commit", "-q", "-m", COMMIT_MESSAGE], cwd=repo)
