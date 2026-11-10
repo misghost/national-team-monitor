@@ -38,7 +38,7 @@ PYTHONPATH=src python3 -m ntm serve
 
 ```bash
 PYTHONPATH=src python3 -m ntm check     # 自检：实体去重/PIT/信号铁律
-python3 -m pytest -q                    # 124 项测试
+python3 -m pytest -q                    # 127 项测试
 curl http://localhost:8000/api/health
 ```
 
@@ -222,7 +222,7 @@ NTM_WIND_KLINE_DAYS=120
 
 字段映射与已知边界：
 
-- `securities_get_trend` → 沪深300日序列 → 收盘价，自行计算 1 日/5 日涨跌幅。参数定义不完整时才调用 `market_search_tools`
+- `get_index_kline` → 沪深300日序列（Markdown 表）→ 收盘价，自行计算 1 日/5 日涨跌幅。`securities_get_trend` 的 JSON（dates + series）也能解析
 - `fund_get_size` → **场内流通份额** `f_unit_floortrading`（份）→ `total_share`，
   当日份额变化 `f_unit_floortradingchange`（份）→ `share_change`，
   `f_etf_netasset` 为上市基金规模（元）。日频且可按 `asOfDate` 回溯；**绝不用成交额或资金流顶替份额**

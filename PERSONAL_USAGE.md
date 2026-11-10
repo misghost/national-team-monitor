@@ -37,7 +37,7 @@ Wind 终端自己的登录态由客户端保管，本程序不读取 Wind 账号
 
 ### Wind MCP（Linux 服务器，不需要本机 Wind 终端）
 
-托管地址是 `https://mcp.wind.com.cn/vserver_wind_tools/mcp/`。密钥只放 `NTM_WIND_MCP_KEY`，不要放进仓库。
+托管地址是 `https://mcp.wind.com.cn/vserver_wind_tools/mcp/`。规范密钥名是 `NTM_WIND_MCP_KEY`，不要放进仓库。旧部署若只设置了 `NTM_DATA_API_KEY`，会当作密钥回落；`NTM_DATA_ENDPOINT` 也只在显式设置时覆盖默认地址。
 
 ```bash
 export NTM_DEMO_MODE=0
@@ -47,7 +47,7 @@ export NTM_WIND_MCP_KEY=你的Wind密钥
 PYTHONPATH=src python3 scripts/daily_personal.py
 ```
 
-份额用已核对的 `fund_get_size`（场内流通份额，单位份）。指数日序列选用搜索结果里的 `securities_get_trend`；它的参数表在现有样本里不完整，程序只在这时再调 `market_search_tools`。
+份额用已核对的 `fund_get_size`（场内流通份额，单位份）。指数用 `get_index_kline`（线上搜索排名第一，返回 Markdown 表）。`securities_get_trend` 的 JSON（`dates` + `series`）也能解析，但不是默认调用。
 
 ### iFinD
 
@@ -73,11 +73,11 @@ export NTM_IFIND_REFRESH_TOKEN=你的refresh_token
 # 也认 ifind_api_refresh_token。已有 access_token 时可另设 ifind_api_access_token，
 # 失效时仍用 refresh_token 重换。
 #
-# 技能包 v1.1.0 没有收录「场内流通份额」和 IOPV 的指标代码。
-# 指数收盘价用文档里的 close。份额和净值必须你自己确认后填入，否则程序会失败停止：
-export NTM_IFIND_SHARE_FIELD=确认后的份额指标
-export NTM_IFIND_SHARE_PARAMS='[]'        # get_indicator_params 的顺序；没有参数就填 []
-export NTM_IFIND_NAV_FIELD=确认后的净值指标
+# 2026-11-09 线上核对，与 Wind 净申购序列一致。不设这两个变量时也会用它们。
+# 不要再填别的未核对代码。参数模板是空数组。
+export NTM_IFIND_SHARE_FIELD=ths_inner_float_shares_fund
+export NTM_IFIND_SHARE_PARAMS='[]'
+export NTM_IFIND_NAV_FIELD=ths_iopv_fund
 export NTM_IFIND_NAV_PARAMS='[]'
 PYTHONPATH=src python3 scripts/daily_personal.py
 ```
@@ -110,7 +110,7 @@ WindPy 历史快照写在 `data/windpy_history.json`（可用 `NTM_DATA_DIR` 改
 ## 已知限制
 
 - Wind 场内流通份额字段 `f_unit_floortrading` 已用 2026-11-10 的 510300.SH / 510050.SH 样本核对，单位是份。
-- iFinD 份额和净值指标代码**没有**出现在技能包 v1.1.0 里。不设置 `NTM_IFIND_SHARE_FIELD` / `NTM_IFIND_NAV_FIELD` 时会失败，不会猜一个字段名再写入空数据。
+- iFinD 份额 `ths_inner_float_shares_fund` 与 IOPV `ths_iopv_fund` 已在 2026-11-09 与 Wind 净申购对过，参数都是 `[]`。技能包 v1.1.0 没写这两个代码，不要再换别的未核对字段。
 - iFinDPy 的 SDK 返回格式仍未核对。服务器请用上面的 HTTP 通道。
 - 公告仍建议人工维护 `data/verified_announcements.json`（避免误用新闻标题）。
   WindPy 刷新会读取这份文件；系统不会根据标题自动判定 `is_supportive`。

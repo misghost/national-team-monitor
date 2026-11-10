@@ -68,12 +68,17 @@ WIND_MCP_ENDPOINT = "https://mcp.wind.com.cn/vserver_wind_tools/mcp/"
 
 
 def wind_mcp_key() -> str:
-    """只读 NTM_WIND_MCP_KEY。不回落到 NTM_DATA_API_KEY，避免两套凭据混用。"""
-    return os.getenv("NTM_WIND_MCP_KEY", "").strip()
+    """规范名是 NTM_WIND_MCP_KEY。旧部署若只设了 NTM_DATA_API_KEY，仍可用。"""
+    return os.getenv("NTM_WIND_MCP_KEY", "").strip() or os.getenv("NTM_DATA_API_KEY", "").strip()
 
 
 def wind_mcp_endpoint() -> str:
-    return os.getenv("NTM_WIND_MCP_ENDPOINT", "").strip() or WIND_MCP_ENDPOINT
+    """规范端点是托管 MCP。旧部署的 NTM_DATA_ENDPOINT 仅在显式设置时覆盖。"""
+    return (
+        os.getenv("NTM_WIND_MCP_ENDPOINT", "").strip()
+        or os.getenv("NTM_DATA_ENDPOINT", "").strip()
+        or WIND_MCP_ENDPOINT
+    )
 
 
 # ---- 数据源选择 ----

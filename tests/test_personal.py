@@ -295,11 +295,12 @@ def test_ifind_sdk_missing_and_token_path_do_not_leak(monkeypatch):
     monkeypatch.delenv("NTM_IFIND_USER", raising=False)
     monkeypatch.delenv("NTM_IFIND_PASS", raising=False)
     monkeypatch.setenv("NTM_IFIND_REFRESH_TOKEN", SECRET)
+    monkeypatch.setenv("NTM_IFIND_SHARE_FIELD", "custom_share_field")
+    monkeypatch.delenv("NTM_IFIND_SHARE_PARAMS", raising=False)
     with pytest.raises(LiveDataError) as exc2:
         IFindAdapter().fetch("2026-11-10")
     message = str(exc2.value)
-    assert "TODO" in message
-    assert "NTM_IFIND_SHARE_FIELD" in message
+    assert "NTM_IFIND_SHARE_PARAMS" in message
     assert SECRET not in message
 
 

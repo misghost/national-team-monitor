@@ -34,20 +34,20 @@ INDEX_CODE = "000300.SH"
 HISTORY_FILENAME = "ifind_history.json"
 ANNOUNCEMENT_FILENAME = "verified_announcements.json"
 
-# TODO: 技能包 v1.1.0 的 references 没有 ETF 场内流通份额或 IOPV 的指标代码。
-# 已确认的日期序列示例只有股票收盘价 ths_close_price_stock，不能当作份额。
-# 未设置下面两个环境变量时拒绝取数，避免把猜测字段写成空数据或错误数据。
+# 2026-11-09 线上核对：这两个指标与 Wind 场内份额算出的净申购一致。
+# 技能包 v1.1.0 没有收录它们，不要再猜别的代码。参数模板是空数组。
+VERIFIED_SHARE_FIELD = "ths_inner_float_shares_fund"
+VERIFIED_NAV_FIELD = "ths_iopv_fund"
 SHARE_FIELD_TODO = (
-    "TODO: iFinD 技能包 v1.1.0 未列出场内流通份额指标。"
-    f"已确认的日期序列示例是 {CONFIRMED_DS_INDICATOR}（股票收盘价），不能顶替份额。"
-    "请在指标搜索里确认英文代码后设置 NTM_IFIND_SHARE_FIELD，"
-    "并用 get_indicator_params 的顺序设置 NTM_IFIND_SHARE_PARAMS"
-    "（无参数时填 []）。未确认前不会入库。"
+    "NTM_IFIND_SHARE_FIELD 已设置但没有 NTM_IFIND_SHARE_PARAMS。"
+    f"线上核对过的默认是 {VERIFIED_SHARE_FIELD}，参数 []。"
+    "自定义指标必须带上 get_indicator_params 的顺序，没有参数就填 []。"
 )
 NAV_FIELD_TODO = (
-    "TODO: iFinD 技能包 v1.1.0 未列出 ETF IOPV/单位净值指标。"
-    "历史行情文档确认了 close，但收盘价不是份额对应的净值。"
-    "请设置 NTM_IFIND_NAV_FIELD，以及 NTM_IFIND_NAV_PARAMS（无参数时填 []）。"
+    "NTM_IFIND_NAV_FIELD 已设置但没有 NTM_IFIND_NAV_PARAMS。"
+    f"线上核对过的默认是 {VERIFIED_NAV_FIELD}，参数 []。"
+    "不要用股票收盘价 "
+    f"{CONFIRMED_DS_INDICATOR} 顶替 IOPV。"
 )
 
 
@@ -98,13 +98,19 @@ class IFindAdapter(BaseAdapter):
         # 若已在终端登录，部分环境可不显式登录
         return True
 
-    def _indicator_spec(self, field_env: str, params_env: str, missing: str) -> tuple[str, list[str]]:
+    def _indicator_spec(
+        self, field_env: str, params_env: str, default_name: str, missing: str,
+    ) -> tuple[str, list[str]]:
         name = _env(field_env)
+        raw = os.getenv(params_env)
+        raw_text = "" if raw is None else raw.strip()
         if not name:
+            name = default_name
+            if raw_text == "":
+                return name, []
+        elif raw_text == "":
             raise LiveDataError(missing)
-        raw = _env(params_env)
-        if raw == "":
-            raise LiveDataError(missing)
+        raw = raw_text
         if raw == "[]":
             return name, []
         if raw.startswith("["):
@@ -182,10 +188,12 @@ class IFindAdapter(BaseAdapter):
 
     def _fetch_http(self, as_of: str) -> FetchResult:
         share_name, share_params = self._indicator_spec(
-            "NTM_IFIND_SHARE_FIELD", "NTM_IFIND_SHARE_PARAMS", SHARE_FIELD_TODO,
+            "NTM_IFIND_SHARE_FIELD", "NTM_IFIND_SHARE_PARAMS",
+            VERIFIED_SHARE_FIELD, SHARE_FIELD_TODO,
         )
         nav_name, nav_params = self._indicator_spec(
-            "NTM_IFIND_NAV_FIELD", "NTM_IFIND_NAV_PARAMS", NAV_FIELD_TODO,
+            "NTM_IFIND_NAV_FIELD", "NTM_IFIND_NAV_PARAMS",
+            VERIFIED_NAV_FIELD, NAV_FIELD_TODO,
         )
         client = self._http or IFindHttp()
         end = date.fromisoformat(as_of)

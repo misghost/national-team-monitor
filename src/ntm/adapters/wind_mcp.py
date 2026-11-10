@@ -13,10 +13,9 @@
   份额变动日期、上市基金规模（元）。样本见 510300.SH / 510050.SH。
   **不使用成交额或资金流顶替 total_share。**
 - 净值与量能：``fund_get_listed_historical_price`` 的 IOPV（元）与成交额（元）。
-- 指数序列：搜索样本里覆盖指数区间的工具是 ``securities_get_trend``。
-  该工具的参数定义在附件里被截断，所以只有调用失败或本地没有参数定义时
-  才回退 ``market_search_tools``。旧的 ``get_index_kline`` JSON 仍能解析，
-  供已有测试使用。
+- 指数序列：优先 ``get_index_kline``（线上搜索得分 0.99，返回 Markdown 表）。
+  ``securities_get_trend`` 若被调用，其返回是 ``dates`` + ``series`` 的 JSON，
+  两种形状都能解析；对不上就停止，不写空数据。
 - L3 官方公告：系统**不自动判定** is_supportive。仅从
   ``data/verified_announcements.json`` 读取人工核验后的记录；
   文件不存在即为空列表。这是防止「用新闻标题伪造确权」的刻意设计。
@@ -44,9 +43,9 @@ from .. import config
 from ..datasource import LiveDataError, validate_dataset
 from .base import BaseAdapter, FetchResult
 
-SOURCE_NAME = "wind-mcp:fund_get_size+securities_get_trend+fund_get_listed_historical_price"
+SOURCE_NAME = "wind-mcp:fund_get_size+get_index_kline+fund_get_listed_historical_price"
 INDEX_CODE = "000300.SH"
-INDEX_TOOL = "securities_get_trend"
+INDEX_TOOL = "get_index_kline"
 HISTORY_FILENAME = "wind_history.json"
 ANNOUNCEMENT_FILENAME = "verified_announcements.json"
 # fund_get_listed_historical_price 的 windCodes.maxItems 在搜索样本里是 50。
@@ -193,7 +192,7 @@ def parse_tool_search(text: str) -> list[dict[str, Any]]:
 
 
 def select_index_schema(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """优先用搜索样本里点名的 securities_get_trend，否则取得分最高且提到指数的工具。"""
+    """搜索结果里优先 get_index_kline（线上得分最高的指数工具）。"""
     for row in rows:
         if row["toolName"] == INDEX_TOOL:
             return row["params"]
@@ -257,19 +256,101 @@ def _markdown_dicts(text: str) -> list[dict[str, str]]:
     return rows
 
 
+_CLOSE_SERIES_KEYS = ("close", "收盘价", "收盘", "match", "MATCH")
+_AMOUNT_SERIES_KEYS = ("amount", "turnover", "TURNOVER", "成交额")
+
+
 def _kline_points(text: str, as_of: str) -> list[dict[str, Any]]:
-    """指数序列。优先识别旧版列式 JSON；否则按 Markdown 表的日期/收盘价列。"""
+    """指数序列。JSON 的 dates+series、列式 TIME/MATCH，或 Markdown 表，三种都认。"""
     stripped = (text or "").strip()
-    if stripped.startswith("{"):
+    if stripped.startswith("{") or stripped.startswith("["):
         try:
             payload = json.loads(stripped)
         except ValueError:
             payload = None
-        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        if isinstance(payload, dict):
             if payload.get("error"):
                 raise LiveDataError("指数序列返回错误，已停止采集")
-            return _kline_points_from_columns(payload["data"], as_of)
+            dated = _dates_and_series(payload)
+            if dated is not None:
+                return _kline_points_from_dates_series(*dated, as_of)
+            data = payload.get("data")
+            if isinstance(data, dict) and data.get("columns") and data.get("rows"):
+                return _kline_points_from_columns(data, as_of)
+            raise LiveDataError(
+                "指数 JSON 缺少 dates/series 或 TIME/MATCH 列，已停止采集"
+            )
     return _kline_points_from_markdown(stripped, as_of)
+
+
+def _dates_and_series(payload: dict[str, Any]) -> tuple[list, Any] | None:
+    if isinstance(payload.get("dates"), list) and "series" in payload:
+        return payload["dates"], payload["series"]
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("dates"), list) and "series" in data:
+        return data["dates"], data["series"]
+    return None
+
+
+def _named_series(series: dict[str, Any], keys: tuple[str, ...]) -> list | None:
+    folded = {str(k).lower(): v for k, v in series.items()}
+    for key in keys:
+        if key.lower() in folded and isinstance(folded[key.lower()], list):
+            return folded[key.lower()]
+    return None
+
+
+def _kline_points_from_dates_series(dates: list, series: Any, as_of: str) -> list[dict[str, Any]]:
+    """securities_get_trend：dates 与 series 对齐。对不齐就停止，不补空点。"""
+    if not isinstance(dates, list) or not dates:
+        raise LiveDataError("securities_get_trend 的 dates 为空，已停止采集")
+    closes: list | None = None
+    amounts: list | None = None
+    if isinstance(series, dict):
+        closes = _named_series(series, _CLOSE_SERIES_KEYS)
+        amounts = _named_series(series, _AMOUNT_SERIES_KEYS)
+    elif isinstance(series, list) and series and all(_is_number(x) for x in series):
+        closes = series
+    elif isinstance(series, list) and series and all(isinstance(x, dict) for x in series):
+        if any("values" in x or "data" in x for x in series):
+            for item in series:
+                name = str(item.get("name") or item.get("field") or "")
+                values = item.get("values", item.get("data"))
+                if not isinstance(values, list):
+                    continue
+                if name.lower() in {k.lower() for k in _CLOSE_SERIES_KEYS}:
+                    closes = values
+                elif name.lower() in {k.lower() for k in _AMOUNT_SERIES_KEYS}:
+                    amounts = values
+        else:
+            closes = [row.get("close", row.get("收盘价", row.get("match"))) for row in series]
+            amounts = [row.get("amount", row.get("成交额", row.get("turnover"))) for row in series]
+            if any(row.get("date") or row.get("日期") for row in series):
+                dates = [row.get("date") or row.get("日期") or dates[i] for i, row in enumerate(series)]
+    if not isinstance(closes, list) or len(closes) != len(dates):
+        raise LiveDataError(
+            "securities_get_trend 的 dates 与收盘序列长度不一致或缺少收盘价，已停止采集"
+        )
+    if amounts is not None and len(amounts) != len(dates):
+        raise LiveDataError("securities_get_trend 的成交额序列长度与 dates 不一致，已停止采集")
+    points = []
+    for i, stamp in enumerate(dates):
+        day = str(stamp)[:10]
+        if not day or day > as_of:
+            continue
+        close = _num(closes[i])
+        if close is None or close <= 0:
+            raise LiveDataError(f"securities_get_trend 在 {day} 没有有效收盘价，已停止采集")
+        amount = _num(amounts[i]) if amounts is not None else None
+        points.append({"date": day, "_close": close, "_amount": amount})
+    if not points:
+        raise LiveDataError("securities_get_trend 在 as_of 之前没有收盘价，已停止采集")
+    points.sort(key=lambda item: item["date"])
+    return points
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _kline_points_from_columns(block: dict[str, Any], as_of: str) -> list[dict[str, Any]]:
@@ -505,20 +586,17 @@ class WindMCPAdapter(BaseAdapter):
         tmp.replace(self.history_path)
 
     # ---------- 各层取数 ----------
-    def _index_arguments(self, client: WindMCPClient, begin: str, end: str) -> dict[str, Any]:
-        """securities_get_trend 的参数定义在附件中被截断，所以只在需要时搜索。"""
-        if self._index_schema is None and hasattr(client, "search_tools"):
-            rows = client.search_tools("沪深300指数 000300.SH 日收盘价历史序列", top_k=3)
-            self._index_schema = select_index_schema(rows)
-        if self._index_schema:
-            return arguments_from_schema(self._index_schema, INDEX_CODE, begin, end)
-        # 假客户端没有 search_tools。键名是假设，真实调用会走上面的搜索。
-        return {"windCode": INDEX_CODE, "startDate": begin, "endDate": end}
-
     def _fetch_kline(self, client: WindMCPClient, as_of: str) -> list[dict[str, Any]]:
         end = date.fromisoformat(as_of)
         begin = (end - timedelta(days=config.wind_kline_days())).isoformat()
-        text = client.call(INDEX_TOOL, self._index_arguments(client, begin, as_of))
+        # 线上已跑通的参数名。不先搜索，避免选中 securities_get_trend。
+        text = client.call(INDEX_TOOL, {
+            "windcode": INDEX_CODE,
+            "begin_date": begin,
+            "end_date": end.isoformat(),
+            "period": "1d",
+            "count": config.wind_kline_days(),
+        })
         series = _kline_points(text, as_of)
         if len(series) < 6:
             raise LiveDataError("指数序列有效交易日不足 6 天，无法计算 5 日涨跌幅，已停止采集")

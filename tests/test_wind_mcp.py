@@ -16,6 +16,14 @@ DAYS = [(date.fromisoformat(AS_OF) - timedelta(days=i)).isoformat()
         for i in range(11, -1, -1)]  # 12 个交易日，升序
 
 
+def kline_markdown(days=DAYS, base=4000.0) -> str:
+    """get_index_kline 线上返回的 Markdown 表。数值与下面的列式 JSON 对齐。"""
+    lines = ["| 日期 | 收盘价 | 成交额（元） |", "|---|---|---|"]
+    for i, day in enumerate(days):
+        lines.append(f"| {day} | {base + i * 10} | {400000000000 + i * 1_000_000_000} |")
+    return "\n".join(lines)
+
+
 def kline_text(days=DAYS, base=4000.0) -> str:
     rows = []
     for i, d in enumerate(days):
@@ -73,8 +81,8 @@ class FakeClient:
         self.calls.append((tool_name, arguments))
         if tool_name in self.fail_on:
             raise LiveDataError("模拟 Wind 工具失败")
-        if tool_name == "securities_get_trend":
-            return kline_text()
+        if tool_name == "get_index_kline":
+            return kline_markdown()
         if tool_name == "fund_get_size":
             return size_text(self.size_day_override or arguments["asOfDate"])
         if tool_name == "fund_get_listed_historical_price":
@@ -148,7 +156,7 @@ def test_history_reuses_cached_days(adapter):
     adapter.fetch(AS_OF)
     # 第二次只保留 K 线，已缓存的交易日不再重复抓取
     assert len(adapter.client.calls) == 1
-    assert adapter.client.calls[0][0] == "securities_get_trend"
+    assert adapter.client.calls[0][0] == "get_index_kline"
     assert first_calls > 1
 
 
@@ -326,46 +334,73 @@ def test_batches_wind_codes(adapter):
     assert "f_netasset_total2" not in wm.SIZE_FIELDS
 
 
-def test_index_search_is_only_a_fallback(adapter):
+def test_get_index_kline_markdown_is_the_live_path(adapter):
+    market = adapter._fetch_kline(adapter.client, AS_OF)
+    assert adapter.client.calls[0][0] == "get_index_kline"
+    args = adapter.client.calls[0][1]
+    assert args["windcode"] == "000300.SH"
+    assert args["begin_date"] <= AS_OF <= args["end_date"]
+    assert args["end_date"] == AS_OF
+    assert args["period"] == "1d"
+    assert market[-1]["index_close"] == 4000 + (len(DAYS) - 1) * 10
+    assert market[-1]["amount_yi"] > 0
+
+
+def test_index_fetch_does_not_search_even_if_available(adapter):
     class SearchClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.searches = []
+
         def search_tools(self, question, top_k=3):
-            return [{
-                "toolName": "securities_get_trend",
-                "score": 0.2,
-                "description": "指数历史序列",
-                "params": {
-                    "properties": {
-                        "windCode": {"type": "string"},
-                        "startDate": {"type": "string"},
-                        "endDate": {"type": "string"},
-                    },
-                    "required": ["windCode", "startDate", "endDate"],
-                },
-            }]
+            self.searches.append(question)
+            return []
 
     client = SearchClient()
     adapter.client = client
     adapter._fetch_kline(client, AS_OF)
-    args = client.calls[0][1]
-    assert client.calls[0][0] == "securities_get_trend"
-    assert args["windCode"] == "000300.SH"
-    assert "startDate" in args and "endDate" in args
+    assert client.searches == []
+    assert client.calls[0][0] == "get_index_kline"
 
 
-def test_markdown_index_table_computes_changes():
-    lines = ["| 日期 | 收盘价 | 成交额（元） |", "|---|---|---|"]
-    for i, day in enumerate(DAYS):
-        lines.append(f"| {day} | {4000 + i * 10} | {400000000000 + i * 1000000000} |")
-    market_points = wm._kline_points_from_markdown("\n".join(lines), AS_OF)
-    assert len(market_points) == len(DAYS)
-    assert market_points[-1]["_close"] == 4000 + (len(DAYS) - 1) * 10
+def test_securities_get_trend_json_dates_and_series():
+    payload = {
+        "dates": DAYS,
+        "series": {
+            "close": [4000 + i * 10 for i in range(len(DAYS))],
+            "amount": [400000000000 + i * 1_000_000_000 for i in range(len(DAYS))],
+        },
+    }
+    points = wm._kline_points(json.dumps(payload), AS_OF)
+    assert [p["date"] for p in points] == list(DAYS)
+    assert points[1]["_close"] == 4010
+    assert points[-1]["_amount"] == 400000000000 + (len(DAYS) - 1) * 1_000_000_000
+    # 包在 data 里、以及命名序列，同样认
+    wrapped = {"data": {"dates": DAYS[:6], "series": [
+        {"name": "close", "values": [4000 + i * 10 for i in range(6)]},
+    ]}}
+    assert len(wm._kline_points(json.dumps(wrapped), AS_OF)) == 6
+    with pytest.raises(LiveDataError, match="长度不一致"):
+        wm._kline_points(json.dumps({"dates": DAYS, "series": {"close": [1, 2]}}), AS_OF)
 
 
-def test_live_client_requires_wind_mcp_key(monkeypatch):
+def test_unrecognized_index_json_is_not_called_a_markdown_miss():
+    with pytest.raises(LiveDataError, match="dates/series") as exc:
+        wm._kline_points('{"foo": 1}', AS_OF)
+    assert "Markdown" not in str(exc.value)
+
+
+def test_live_client_key_fallback(monkeypatch):
     monkeypatch.delenv("NTM_WIND_MCP_KEY", raising=False)
-    monkeypatch.setenv("NTM_DATA_API_KEY", "should-not-be-used")
+    monkeypatch.delenv("NTM_DATA_API_KEY", raising=False)
+    monkeypatch.delenv("NTM_DATA_ENDPOINT", raising=False)
     monkeypatch.setenv("NTM_DATA_VERIFIED", "1")
-    with pytest.raises(LiveDataError) as exc:
-        wm.WindMCPAdapter().fetch(AS_OF)
-    assert "NTM_WIND_MCP_KEY" in str(exc.value)
-    assert "should-not-be-used" not in str(exc.value)
+    with pytest.raises(LiveDataError, match="NTM_WIND_MCP_KEY"):
+        wm.WindMCPAdapter()._build_client()
+    monkeypatch.setenv("NTM_DATA_API_KEY", "fallback-key")
+    monkeypatch.setenv("NTM_DATA_ENDPOINT", "https://mcp.example/mcp/")
+    client = wm.WindMCPAdapter()._build_client()
+    assert client.key == "fallback-key"
+    assert client.endpoint == "https://mcp.example/mcp/"
+    monkeypatch.setenv("NTM_WIND_MCP_KEY", "canonical-key")
+    assert wm.WindMCPAdapter()._build_client().key == "canonical-key"

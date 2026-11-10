@@ -152,13 +152,32 @@ def test_bad_refresh_token_does_not_loop_or_leak(monkeypatch):
     assert sum(1 for call in session.calls if call["url"].endswith("/get_access_token")) == 1
 
 
-def test_missing_share_indicator_fails_before_http(monkeypatch):
+def test_verified_ifind_fields_default_without_http(monkeypatch):
+    from ntm.adapters.ifind import VERIFIED_NAV_FIELD, VERIFIED_SHARE_FIELD
+
+    monkeypatch.delenv("NTM_IFIND_SHARE_FIELD", raising=False)
+    monkeypatch.delenv("NTM_IFIND_SHARE_PARAMS", raising=False)
+    monkeypatch.delenv("NTM_IFIND_NAV_FIELD", raising=False)
+    monkeypatch.delenv("NTM_IFIND_NAV_PARAMS", raising=False)
+    adapter = IFindAdapter()
+    assert adapter._indicator_spec(
+        "NTM_IFIND_SHARE_FIELD", "NTM_IFIND_SHARE_PARAMS",
+        VERIFIED_SHARE_FIELD, "missing",
+    ) == ("ths_inner_float_shares_fund", [])
+    assert adapter._indicator_spec(
+        "NTM_IFIND_NAV_FIELD", "NTM_IFIND_NAV_PARAMS",
+        VERIFIED_NAV_FIELD, "missing",
+    ) == ("ths_iopv_fund", [])
+
+
+def test_custom_share_field_without_params_stops(monkeypatch):
     monkeypatch.setenv("NTM_DATA_VERIFIED", "1")
     monkeypatch.setenv("NTM_IFIND_REFRESH_TOKEN", SECRET)
-    monkeypatch.delenv("NTM_IFIND_SHARE_FIELD", raising=False)
+    monkeypatch.setenv("NTM_IFIND_SHARE_FIELD", "custom_share_field")
+    monkeypatch.delenv("NTM_IFIND_SHARE_PARAMS", raising=False)
     with pytest.raises(LiveDataError) as exc:
         IFindAdapter().fetch(AS_OF)
-    assert "TODO" in str(exc.value)
+    assert "NTM_IFIND_SHARE_PARAMS" in str(exc.value)
     assert SECRET not in str(exc.value)
 
 
