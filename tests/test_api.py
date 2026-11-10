@@ -84,3 +84,49 @@ def test_backtest_returns_pit_safe_result():
         b = c.get("/api/backtest?horizon=20").json()
     assert "events" in b and "note" in b
     assert "样本量" in b["note"]
+
+
+def test_etf_pool_contract():
+    with _client_with_data() as c:
+        d = c.get("/api/etf/pool").json()
+    assert len(d["items"]) == 7
+    assert d["validation"] == []
+    assert d["is_demo"] is True
+    assert all(cl["verified"] is False for cl in d["claims"])
+    c159845 = next(x for x in d["items"] if x["code"] == "159845")
+    assert "华夏" in c159845["name"] and "易方达" not in c159845["name"]
+
+
+def test_etf_momentum_contract_and_neutrality():
+    with _client_with_data() as c:
+        d = c.get("/api/etf/momentum").json()
+    assert d["is_demo"] is True
+    assert len(d["items"]) == 7
+    assert d["summary"]["is_signal"] is False
+    required = {"code", "name", "amount_yi", "amount_prev_yi", "amount_ma_yi",
+                "amount_change_yi", "amount_change_pct", "volume_multiple",
+                "is_spike", "is_2026_focus", "share_change_yi", "note"}
+    assert all(required <= set(i) for i in d["items"])
+    assert "不能推出" in d["caveat"] or "不等于" in d["caveat"]
+
+
+def test_momentum_does_not_enter_signal_conditions():
+    """量能观测是独立辅助层，不得污染三重共振条件集合。"""
+    with _client_with_data() as c:
+        sig = c.get("/api/overview").json()["signal"]
+        mom = c.get("/api/etf/momentum").json()
+    assert set(sig["conditions"]) == {"market_drop", "etf_sync", "official"}
+    assert mom["summary"]["is_signal"] is False
+
+
+def test_reference_strategy_contract():
+    with _client_with_data() as c:
+        s = c.get("/api/reference/strategy").json()
+    assert s["items"]
+    counts = s["disposition_counts"]
+    assert counts["已实现"] > 0 and counts["不实现（合规）"] > 0
+    rejected = [i for i in s["items"] if i["disposition"] == "不实现（合规）"]
+    assert all(i["reason"] for i in rejected)
+    # 交易指令类规则必须全部落在「不实现」
+    assert any("分批买入" in i["title"] for i in rejected)
+    assert any("分批卖出" in i["title"] for i in rejected)

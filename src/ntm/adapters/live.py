@@ -16,8 +16,7 @@ from .base import BaseAdapter, FetchResult
 
 ENABLED = os.getenv("NTM_ENABLE_LIVE_ADAPTERS", "0").strip().lower() in {"1", "true", "yes"}
 NOT_VERIFIED = (
-    "真实数据源未核验：接口结构、字段含义、更新频率、授权与版权、
-"
+    "真实数据源未核验：接口结构、字段含义、更新频率、授权与版权、"
     "robots/频控/反爬策略均需接入方自行确认。本模块默认禁用。"
 )
 

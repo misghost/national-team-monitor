@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS etf_daily (
     share_change REAL NOT NULL,
     nav REAL NOT NULL,
     est_net_yi REAL NOT NULL,
+    amount_yi REAL NOT NULL DEFAULT 0,   -- 成交额（亿元），L3 辅助观测，非份额
     layer TEXT NOT NULL DEFAULT 'L2',
     source TEXT NOT NULL,
     PRIMARY KEY (date, code)
@@ -99,9 +100,17 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """轻量前向迁移：为旧库补齐新增列，避免 CREATE TABLE IF NOT EXISTS 静默忽略。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(etf_daily)")}
+    if cols and "amount_yi" not in cols:
+        conn.execute("ALTER TABLE etf_daily ADD COLUMN amount_yi REAL NOT NULL DEFAULT 0")
+
+
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
 
 
 def is_empty() -> bool:
@@ -147,11 +156,12 @@ def save_dataset(dataset: dict[str, Any]) -> None:
         )
         conn.executemany(
             "INSERT INTO etf_daily"
-            "(date,code,name,total_share,share_change,nav,est_net_yi,layer,source)"
-            " VALUES(?,?,?,?,?,?,?,?,?)",
+            "(date,code,name,total_share,share_change,nav,est_net_yi,amount_yi,layer,source)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
             [
                 (r["date"], r["code"], r["name"], r["total_share"], r["share_change"],
-                 r["nav"], r["est_net_yi"], r.get("layer", "L2"), r.get("source", "demo"))
+                 r["nav"], r["est_net_yi"], r.get("amount_yi", 0.0),
+                 r.get("layer", "L2"), r.get("source", "demo"))
                 for r in dataset["etf"]
             ],
         )
@@ -256,6 +266,62 @@ def get_etf_series(days: int = 30) -> list[dict]:
         }
         for r in reversed(rows)
     ]
+
+
+def get_etf_momentum(day: str | None = None) -> dict:
+    """某交易日 7 只标的的量能观测（L3 辅助，不可归因）。
+
+    成交额与份额是两条独立口径：这里只用 ``amount_yi`` 计算放量倍数，
+    并附带同期 ``est_net_yi``（份额变化估算）作对照，供界面展示
+    「放量 ≠ 份额增加」的反例。
+    """
+    from . import momentum
+    from .etf_pool import ETF_POOL, POOL_CAVEAT, focus_codes, pool_as_dict
+
+    with connect() as conn:
+        if day is None:
+            row = conn.execute("SELECT MAX(date) AS d FROM etf_daily").fetchone()
+            day = row["d"] if row and row["d"] else ""
+        rows = conn.execute(
+            "SELECT date,code,name,amount_yi,est_net_yi FROM etf_daily ORDER BY date,code"
+        ).fetchall()
+
+    # 按代码聚合有序历史；窗口取「当日之前」的 N 个交易日，避免前视
+    by_code: dict[str, list[tuple[str, float, float, str]]] = {}
+    for r in rows:
+        by_code.setdefault(r["code"], []).append(
+            (r["date"], r["amount_yi"], r["est_net_yi"], r["name"])
+        )
+    # 全局交易日序列，用于确定当日之前的窗口
+    all_days = sorted({r["date"] for r in rows})
+    prior_days = [d for d in all_days if d < day][-config.VOLUME_MA_WINDOW:]
+
+    focus = set(focus_codes())
+    threshold = config.VOLUME_SPIKE_MULTIPLE
+    out_rows = []
+    for e in ETF_POOL:
+        series = by_code.get(e.code, [])
+        cur = next((x for x in series if x[0] == day), None)
+        if cur is None:
+            continue
+        hist = [x[1] for x in series if x[0] in prior_days]
+        prev = next((x[1] for x in reversed(series) if x[0] < day), 0.0)
+        out_rows.append(momentum.build_row(
+            code=e.code, name=e.name, current=cur[1], previous=prev,
+            history=hist, is_2026_focus=e.code in focus,
+            share_change_yi=cur[2], threshold=threshold,
+        ))
+
+    summary = momentum.summarize(day, out_rows, threshold)
+    return {
+        "date": day,
+        "is_demo": get_meta("dataset_is_demo", "1") == "1",
+        "pool": pool_as_dict(),
+        "pool_caveat": POOL_CAVEAT,
+        "items": [r.as_dict() for r in out_rows],
+        "summary": summary.as_dict(),
+        "caveat": momentum.MOMENTUM_CAVEAT,
+    }
 
 
 def get_signals(days: int = 90) -> list[dict]:

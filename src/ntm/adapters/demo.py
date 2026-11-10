@@ -73,25 +73,45 @@ class DemoAdapter(BaseAdapter):
                 "margin_balance_yi": round(rng.uniform(27000, 30500), 1),
             })
 
-        # ---- ETF 每日份额（L2 估算） ----
+        # ---- ETF 每日份额（L2 估算）+ 成交额（L3 辅助观测） ----
+        # 成交额与份额是两条独立口径：二级市场放量不改变总份额。
+        # 刻意构造一个「放量但份额未增加」的反例日，用于界面演示
+        # 「放量 2 倍 ≠ 国家队加仓」这一关键区别。
+        volume_only_idx = n - 8  # 非事件日，避免干扰三重共振信号
+        amount_base = {
+            "510300": 62.0, "510050": 34.0, "510500": 41.0,
+            "512100": 38.0, "159845": 16.0, "588000": 55.0, "159915": 33.0,
+        }
         etf: list[dict] = []
         for i, day in enumerate(dates):
             is_event = i in event_idx
+            is_volume_only = i == volume_only_idx
             for code, name in config.CORE_ETF:
                 nav = round(rng.uniform(1.2, 4.6), 4)
                 if is_event:
                     # 全部核心宽基同步大额净申购，合计超阈值
                     net_yi = round(rng.uniform(62, 115), 2)
                     share_change = net_yi * 1e8 / nav
+                elif is_volume_only:
+                    # 反例：成交额放量，但份额几乎不变（±3 亿）
+                    net_yi = round(rng.uniform(-3, 3), 2)
+                    share_change = net_yi * 1e8 / nav
                 else:
                     net_yi = round(rng.uniform(-28, 38), 2)
                     share_change = net_yi * 1e8 / nav
                 total_share = round(rng.uniform(2.0e10, 9.0e10) + share_change, 2)
+
+                base = amount_base.get(code, 30.0)
+                if is_event or is_volume_only:
+                    amount = round(base * rng.uniform(2.3, 3.1), 2)
+                else:
+                    amount = round(base * rng.uniform(0.78, 1.22), 2)
                 etf.append({
                     "date": day, "code": code, "name": name,
                     "total_share": total_share, "share_change": round(share_change, 2),
                     "nav": nav, "est_net_yi": net_yi,
-                    "layer": "L2", "source": "demo:etf_total_share",
+                    "amount_yi": amount,
+                    "layer": "L2", "source": "demo:etf_total_share+amount",
                 })
 
         # ---- 官方公告（L3） ----

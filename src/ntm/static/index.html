@@ -264,6 +264,40 @@ main{flex:1 0 auto;width:100%}
 .footer-inner .f-title{color:#fca5a5;font-weight:700;margin-bottom:4px}
 .footer-inner .f-line{margin:2px 0}
 .footer-inner .f-meta{margin-top:8px;color:#64748b;font-size:11.5px}
+
+/* ---------- 标的池 / 量能观察 / 参考策略（新增） ---------- */
+.tag-focus{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.tag-alt{background:#f8fafc;color:#475569;border:1px solid #e2e8f0}
+.tag-adopted{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+.tag-kept{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.tag-rejected{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.momentum-flag{
+  display:inline-block;padding:1px 8px;border-radius:5px;font-size:11px;font-weight:700;
+}
+.flag-spike{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.flag-normal{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
+.divergence{
+  margin-top:12px;padding:11px 14px;border-radius:8px;font-size:12.5px;line-height:1.75;
+  background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid var(--warn);color:#9a3412;
+}
+.divergence b{color:#7c2d12}
+.claim-box{
+  margin-top:14px;padding:12px 14px;border-radius:8px;
+  background:#f8fafc;border:1px dashed #cbd5e1;font-size:12px;line-height:1.8;color:var(--ink-2);
+}
+.claim-box .claim-title{font-weight:700;color:#0f172a;margin-bottom:5px}
+.claim-item{margin:4px 0}
+.strat-item{
+  border:1px solid var(--line);border-radius:9px;padding:11px 13px;background:#fafbfd;
+}
+.strat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
+@media(max-width:900px){.strat-grid{grid-template-columns:1fr}}
+.strat-item .st-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:5px}
+.strat-item .st-title{font-weight:700;color:#0f172a;font-size:13px}
+.strat-item .st-orig{font-size:12px;color:var(--ink-2);line-height:1.7}
+.strat-item .st-reason{font-size:11.5px;color:var(--ink-soft);line-height:1.7;margin-top:5px;padding-top:5px;border-top:1px dashed #e2e8f0}
+.strat-counts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.pool-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--ink-soft)}
 </style>
 </head>
 <body>
@@ -322,6 +356,46 @@ main{flex:1 0 auto;width:100%}
     </div>
     <div class="grid grid-3" id="layers-grid"></div>
     <div class="card" style="margin-top:16px;padding:14px 18px" id="glossary-box"></div>
+  </section>
+
+  <!-- 3.5 七只宽基 ETF 标的池 -->
+  <section class="block">
+    <div class="block-head">
+      <h2>7 只核心宽基 ETF 标的池</h2>
+      <span class="desc">观察对象清单 · 列入不等于国家队持有，不构成任何标的推荐</span>
+    </div>
+    <div class="card">
+      <div class="chart-head">
+        <h3>跟踪方向与核实状态</h3>
+        <span class="tag tag-l3">L3 · 观察清单</span>
+      </div>
+      <p class="chart-note">代码 / 名称 / 管理人 / 跟踪指数为可核实事实；「2026 重点观察」源自未经确权的方向性观点，仅作前端高亮，<b>不参与信号计算、非推荐</b>。材料把 <code>159845</code> 标为「易方达」，经多源核实实为<b>华夏中证1000ETF</b>，本池已修正。</p>
+      <div class="tbl-wrap" id="etf-pool-box"></div>
+      <div class="claim-box" id="etf-claims-box"></div>
+      <div class="pool-legend">
+        <span><span class="tag tag-focus">2026 重点观察</span> 视频观点、未确权</span>
+        <span><span class="tag tag-alt">备选标的</span> 补充流动性</span>
+        <span id="pool-validation"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3.6 量能异动观察 -->
+  <section class="block">
+    <div class="block-head">
+      <h2>量能异动观察（辅助）</h2>
+      <span class="desc">成交额 / 环比 / 放量倍数 · 客观观测，不是托底信号，不含买卖指令</span>
+    </div>
+    <div class="card">
+      <div class="chart-head">
+        <h3>7 只 ETF 成交额与份额对照</h3>
+        <span class="tag tag-est">辅助观测 · 不可归因</span>
+      </div>
+      <p class="chart-note">放量倍数 = 当日成交额 ÷ 前 5 日平均成交额。<b>成交额放量属二级市场成交活跃度，不改变 ETF 总份额、无法识别买方身份</b>；「份额变化」为 L2 估算口径，二者分列对照。<b>放量 2 倍 ≠ 份额增加 ≠ 国家队加仓</b>，本区不产生任何操作建议。</p>
+      <div class="divergence" id="momentum-summary">正在加载量能观测…</div>
+      <div class="tbl-wrap" id="momentum-box"></div>
+      <div class="claim-box" id="momentum-caveat"></div>
+    </div>
   </section>
 
   <!-- 4. 图表区 -->
@@ -400,6 +474,23 @@ main{flex:1 0 auto;width:100%}
     </div>
   </section>
 
+  <!-- 6.5 参考策略存档与实现取舍 -->
+  <section class="block">
+    <div class="block-head">
+      <h2>参考策略存档与实现取舍</h2>
+      <span class="desc">完整保留提供的监控方案 / 交易规则 / 复盘流程 / 风险提示原文，逐条标注处置结论</span>
+    </div>
+    <div class="card">
+      <div class="chart-head">
+        <h3>逐条处置说明</h3>
+        <span class="tag tag-neutral">原文存档 · 系统不执行交易指令</span>
+      </div>
+      <p class="chart-note" id="strategy-statement">本系统定位为「分层监控 + 带置信度的概率推断」，不提供任何买卖、仓位或择时指令；所有「国家队资金」判断均为无法确权的概率推断。</p>
+      <div class="strat-counts" id="strategy-counts"></div>
+      <div class="strat-grid" id="strategy-box"></div>
+    </div>
+  </section>
+
   <!-- 7. 噪音屏蔽清单 -->
   <section class="block">
     <div class="block-head">
@@ -435,6 +526,9 @@ main{flex:1 0 auto;width:100%}
     health:'/api/health',
     overview:'/api/overview',
     etf:'/api/etf/shares?days=30',
+    etfpool:'/api/etf/pool',
+    momentum:'/api/etf/momentum',
+    strategy:'/api/reference/strategy',
     signals:'/api/signals?days=90',
     announcements:'/api/announcements?limit=10',
     holdings:'/api/holdings?limit=20',
@@ -796,6 +890,129 @@ main{flex:1 0 auto;width:100%}
   }
 
   /* ============ 渲染：方法论（术语 / 噪音 / 口径陷阱） ============ */
+  /* ============ 渲染：7 只宽基 ETF 标的池 ============ */
+  var FALLBACK_POOL = [
+    {code:'510050',name:'上证50ETF华夏',manager:'华夏基金',index_name:'上证50指数',board:'大盘蓝筹',track_logic:'大盘蓝筹核心标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
+    {code:'510300',name:'沪深300ETF华泰柏瑞',manager:'华泰柏瑞基金',index_name:'沪深300指数',board:'全市场核心宽基',track_logic:'全市场核心宽基',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
+    {code:'510500',name:'中证500ETF南方',manager:'南方基金',index_name:'中证500指数',board:'中盘成长',track_logic:'中盘成长标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
+    {code:'512100',name:'中证1000ETF南方',manager:'南方基金',index_name:'中证1000指数',board:'小盘成长',track_logic:'小盘成长标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
+    {code:'159845',name:'中证1000ETF华夏',manager:'华夏基金',index_name:'中证1000指数',board:'小盘成长',track_logic:'中证1000 备选标的，补充流动性',is_2026_focus:false,is_alternative:true,exchange:'深交所'},
+    {code:'588000',name:'科创50ETF华夏',manager:'华夏基金',index_name:'科创50指数',board:'科技成长',track_logic:'科技成长核心标的',is_2026_focus:true,is_alternative:false,exchange:'上交所'},
+    {code:'159915',name:'创业板ETF易方达',manager:'易方达基金',index_name:'创业板指数',board:'科技成长',track_logic:'创业板核心标的',is_2026_focus:true,is_alternative:false,exchange:'深交所'}
+  ];
+  var FALLBACK_CLAIMS = [
+    {text:'持仓占比 20–40% / 2026 布局重心转向科创50与创业板',verified:false,reason:'属方向性判断，仅 L1 季度前十大持有人可确权，无日频公开口径可核实'},
+    {text:'放量 2 倍视为国家队加仓信号',verified:false,reason:'成交额放量不改变总份额、无法识别买方身份；列入噪音屏蔽'}
+  ];
+  function renderEtfPool(res){
+    var p = payload(res);
+    var items = (p && arr(p.items).length) ? arr(p.items) : FALLBACK_POOL;
+    var claims = (p && arr(p.claims).length) ? arr(p.claims) : FALLBACK_CLAIMS;
+    var offline = !p;
+    var rows = items.map(function(it){
+      var marks = '';
+      if(it.is_2026_focus) marks += ' <span class="tag tag-focus">2026 重点观察</span>';
+      if(it.is_alternative) marks += ' <span class="tag tag-alt">备选标的</span>';
+      return '<tr>'
+        + '<td class="nowrap num"><b>' + h(it.code) + '</b></td>'
+        + '<td class="nowrap">' + h(it.name) + marks + '</td>'
+        + '<td class="nowrap">' + h(it.manager) + '</td>'
+        + '<td class="nowrap">' + h(it.index_name) + '</td>'
+        + '<td class="nowrap">' + h(it.board) + '</td>'
+        + '<td class="nowrap muted">' + h(it.exchange || '') + '</td>'
+        + '<td>' + h(it.track_logic) + (it.note ? '<br><span class="muted">' + h(it.note) + '</span>' : '') + '</td>'
+      + '</tr>';
+    }).join('');
+    $('etf-pool-box').innerHTML = tableShell(
+      ['代码','名称','管理人','跟踪指数','板块方向','交易所','核心跟踪逻辑'], rows);
+
+    $('etf-claims-box').innerHTML =
+      '<div class="claim-title">未经确权的参考观点（不作为事实、不参与信号）</div>'
+      + claims.map(function(c){
+          return '<div class="claim-item">· ' + h(c.text)
+            + ' <span class="tag tag-l2">未确权</span>'
+            + (c.reason ? '<br><span class="muted">理由：' + h(c.reason) + '</span>' : '')
+            + '</div>';
+        }).join('')
+      + (offline ? '<div class="claim-item muted">（接口不可用，展示静态说明）</div>' : '');
+
+    var v = p ? arr(p.validation) : [];
+    $('pool-validation').textContent = v.length
+      ? '标的池校验：' + v.join('；')
+      : (offline ? '标的池校验：离线，未校验' : '标的池校验：通过（7 只、代码唯一、市场匹配）');
+  }
+
+  /* ============ 渲染：量能异动观察 ============ */
+  function renderMomentum(res){
+    var p = payload(res);
+    var summary = p && p.summary ? p.summary : null;
+    var items = p ? arr(p.items) : [];
+    var smBox = $('momentum-summary');
+    if(summary){
+      smBox.innerHTML = '<b>观测结论（非信号）：</b>' + h(summary.observation)
+        + '<br><span class="muted">数据日期 ' + h(summary.date || p.date || '')
+        + ' · 放量阈值 ' + h(summary.threshold) + ' 倍 · is_signal='
+        + (summary.is_signal === true ? 'true' : 'false') + '（量能观测恒非信号）</span>';
+    } else {
+      smBox.innerHTML = '<b>无法连接后端接口</b> · 量能数据暂不可用，不展示任何数值，也不作任何判断。';
+    }
+    var head = ['代码','名称','成交额(亿)','前一日(亿)','5日均额(亿)','环比增量(亿)','环比','放量倍数','份额变化(亿)','量能状态'];
+    var rows = items.map(function(it){
+      var spike = it.is_spike === true;
+      var chg = Number(it.amount_change_pct) || 0;
+      var chgColor = chg >= 0 ? 'var(--up)' : 'var(--down)';
+      return '<tr>'
+        + '<td class="nowrap num"><b>' + h(it.code) + '</b>' + (it.is_2026_focus ? ' <span class="tag tag-focus">重点</span>' : '') + '</td>'
+        + '<td class="nowrap">' + h(it.name) + '</td>'
+        + '<td class="nowrap num right">' + h(fmtNum(it.amount_yi)) + '</td>'
+        + '<td class="nowrap num right">' + h(fmtNum(it.amount_prev_yi)) + '</td>'
+        + '<td class="nowrap num right">' + h(fmtNum(it.amount_ma_yi)) + '</td>'
+        + '<td class="nowrap num right">' + h(fmtNum(it.amount_change_yi)) + '</td>'
+        + '<td class="nowrap num right" style="color:' + chgColor + '">' + (chg>=0?'+':'') + h(chg) + '%</td>'
+        + '<td class="nowrap num right"><b>' + h(fmtNum(it.volume_multiple)) + '</b></td>'
+        + '<td class="nowrap num right">' + h(fmtNum(it.share_change_yi)) + '</td>'
+        + '<td class="nowrap"><span class="momentum-flag ' + (spike?'flag-spike':'flag-normal') + '">'
+          + (spike ? '放量达标' : '平稳') + '</span></td>'
+      + '</tr>';
+    }).join('');
+    $('momentum-box').innerHTML = tableShell(head,
+      rows || '<tr class="empty-row"><td colspan="10">暂无数据 · 无法连接后端接口</td></tr>');
+    $('momentum-caveat').innerHTML =
+      '<div class="claim-title">口径说明</div>'
+      + '<div class="claim-item">' + h((p && p.caveat) ? p.caveat : '成交额放量不改变 ETF 总份额、无法识别买方身份；放量 2 倍不等于国家队加仓。')
+      + '</div>'
+      + '<div class="claim-item muted">「份额变化」为 L2 估算（份额增量 × 净值），仅代表全市场一级市场净申购、不可归因；与成交额分列对照，用于识别「放量但份额未增」。</div>';
+  }
+
+  /* ============ 渲染：参考策略取舍 ============ */
+  var DISPOSITION_CLASS = { '已实现':'tag-adopted', '保留为参考':'tag-kept', '不实现（合规）':'tag-rejected' };
+  function renderStrategy(res){
+    var p = payload(res);
+    if(p && p.statement){ $('strategy-statement').textContent = p.statement; }
+    var counts = p && p.disposition_counts ? p.disposition_counts : null;
+    $('strategy-counts').innerHTML = counts
+      ? ['已实现','保留为参考','不实现（合规）'].map(function(k){
+          return '<span class="tag ' + (DISPOSITION_CLASS[k]||'tag-neutral') + '">'
+            + h(k) + ' ' + h(counts[k] || 0) + ' 项</span>';
+        }).join('')
+      : '<span class="tag tag-neutral">接口不可用，展示静态说明</span>';
+    var items = p ? arr(p.items) : [];
+    if(!items.length){
+      $('strategy-box').innerHTML = '<div class="strat-item"><div class="st-orig">参考策略明细需连接后端接口加载；离线状态下不作任何策略判断。系统不提供买卖、仓位或择时指令。</div></div>';
+      return;
+    }
+    $('strategy-box').innerHTML = items.map(function(it){
+      var cls = DISPOSITION_CLASS[it.disposition] || 'tag-neutral';
+      return '<div class="strat-item">'
+        + '<div class="st-head"><span class="st-title">' + h(it.section) + ' · ' + h(it.title) + '</span>'
+          + '<span class="tag ' + cls + '">' + h(it.disposition) + '</span></div>'
+        + '<div class="st-orig">原文：' + h(it.original) + '</div>'
+        + '<div class="st-reason"><b>理由：</b>' + h(it.reason)
+          + (it.implementation ? '<br><b>对应实现：</b>' + h(it.implementation) : '') + '</div>'
+      + '</div>';
+    }).join('');
+  }
+
   function renderMethodology(res){
     var p = payload(res);
 
@@ -967,7 +1184,7 @@ main{flex:1 0 auto;width:100%}
 
   /* ============ 启动：Promise.all 并发 ============ */
   function boot(){
-    var keys = ['health','overview','etf','signals','announcements','holdings','methodology'];
+    var keys = ['health','overview','etf','etfpool','momentum','strategy','signals','announcements','holdings','methodology'];
     var requests;
     try {
       requests = keys.map(function(k){ return safeFetch(API[k]); });
@@ -982,6 +1199,9 @@ main{flex:1 0 auto;width:100%}
       guard('signal', function(){ renderSignal(R.overview); });
       guard('layers', function(){ renderLayers(R.overview); });
       guard('methodology', function(){ renderMethodology(R.methodology); });
+      guard('etf-pool', function(){ renderEtfPool(R.etfpool); });
+      guard('momentum', function(){ renderMomentum(R.momentum); });
+      guard('strategy', function(){ renderStrategy(R.strategy); });
       guard('etf-chart', function(){ renderEtfChart(R.etf); });
       guard('signals-chart', function(){ renderSignalsChart(R.signals); });
       guard('conditions', function(){ renderConditions(R.overview); });

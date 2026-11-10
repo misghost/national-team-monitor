@@ -12,19 +12,36 @@
 | amount_yi | REAL | 成交额（亿元） |
 | margin_balance_yi | REAL | 融资余额（亿元） |
 
-### `etf_daily` — 宽基 ETF 每日份额明细（L2）
+### `etf_daily` — 宽基 ETF 每日份额明细（L2）+ 成交额（L3 辅助）
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| date, code | TEXT PK | 交易日、ETF 代码 |
+| date, code | TEXT PK | 交易日、ETF 代码（7 只，见 `etf_pool.py`） |
 | name | TEXT | ETF 名称 |
 | total_share | REAL | **总份额**（不是成交额） |
 | share_change | REAL | 份额增量 |
 | nav | REAL | 当日净值 |
 | est_net_yi | REAL | 估算净申购额（亿元）= share_change × nav / 1e8 |
+| amount_yi | REAL | **成交额（亿元）**，二级市场买卖金额；`NOT NULL DEFAULT 0` |
 | layer | TEXT | 恒为 `L2` |
 | source | TEXT | 数据来源标识 |
 
+> **两条口径必须分开**：`est_net_yi` 来自份额变化（一级市场申赎，L2 估算、不可归因）；
+> `amount_yi` 是二级市场成交额（L3 辅助观测）。**放量不改变份额**，
+> 因此不得用 `amount_yi` 推导申购额或国家队买入额。
+>
 > `attributable=False` 是模型层面的硬约束，不依赖字段表达。
+>
+> 旧库兼容：`init_db()` 中的 `_migrate()` 用 `PRAGMA table_info` 检测，
+> 缺 `amount_yi` 时执行 `ALTER TABLE ... ADD COLUMN`，因为
+> `CREATE TABLE IF NOT EXISTS` 不会为已存在的表补列。
+
+### `etf_pool`（代码常量，非数据库表）
+7 只标的结构化定义见 `src/ntm/etf_pool.py`，含 code / name / manager /
+index_name / index_code / board / track_logic / is_2026_focus / is_alternative /
+role / note。`validate_pool()` 保证代码唯一、6 位数字、交易所前缀匹配。
+
+未经确权的参考观点单独存于 `REFERENCE_CLAIMS`（`verified=False`），
+与可核实事实物理隔离，不参与任何判定。
 
 ### `announcements` — 官方公告（L3）
 date / source / title / type / is_supportive(0|1) / url / layer(恒 `L3`)，
@@ -62,6 +79,9 @@ date PK / state / confidence / is_confirmed(恒 0) / payload(JSON)。
 | GET | `/api/health` | `{status, version, is_demo}` |
 | GET | `/api/overview` | 当前信号 + 三层说明 + 免责 |
 | GET | `/api/etf/shares?days=30` | ETF 净申购序列 + 指数 |
+| GET | `/api/etf/pool` | 7 只标的池 + 未确权观点 + `validation` 校验结果 |
+| GET | `/api/etf/momentum?day=YYYY-MM-DD` | 量能观测（成交额/环比/放量倍数/份额对照），`summary.is_signal` 恒 `false` |
+| GET | `/api/reference/strategy` | 参考策略原文存档与逐条处置（含不实现理由） |
 | GET | `/api/signals?days=90` | 历史信号 |
 | GET | `/api/announcements?limit=10` | 公告（L3） |
 | GET | `/api/holdings?limit=20` | 季度持仓（L1） |
@@ -103,6 +123,36 @@ date PK / state / confidence / is_confirmed(恒 0) / payload(JSON)。
 `date` / `index_close` / `index_change_pct` / `net_subscription_yi` /
 `sync_etf_count` / `note`（恒含「L2 估算·不可归因」）。
 
+### `GET /api/etf/momentum` 契约
+```json
+{
+  "date": "2026-11-09", "is_demo": true,
+  "pool": ["7 只标的完整对象"], "pool_caveat": "...",
+  "items": [{
+    "code": "588000", "name": "...",
+    "amount_yi": 120.0, "amount_prev_yi": 45.0, "amount_ma_yi": 40.0,
+    "amount_change_yi": 75.0, "amount_change_pct": 166.67,
+    "volume_multiple": 3.0, "is_spike": true, "is_2026_focus": true,
+    "share_change_yi": 60.0, "note": "L3 辅助观测 · 不可归因"
+  }],
+  "summary": {
+    "date": "2026-11-09", "total_etf": 7, "spike_count": 7,
+    "focus_spike_count": 2, "threshold": 2.0, "spike_codes": ["..."],
+    "observation": "...（纯观测，含份额同步/背离对照）",
+    "caveat": "...", "is_signal": false
+  },
+  "caveat": "..."
+}
+```
+`volume_multiple = amount_yi / 前 5 日平均成交额`（基线为 0 时返回 0）。
+**`is_signal` 恒为 `false`**：量能观测不进入 `signals.evaluate()`，
+三重共振条件集合恒为 `{market_drop, etf_sync, official}`。
+
+### `GET /api/reference/strategy` 契约
+`{version, title, statement, items[], disposition_counts}`；每项含
+`section / title / original / disposition / reason / implementation`。
+`disposition` 枚举：`已实现` / `保留为参考` / `不实现（合规）`。
+
 ### 信号状态枚举
 | state | 含义 |
 |-------|------|
@@ -120,4 +170,7 @@ date PK / state / confidence / is_confirmed(恒 0) / payload(JSON)。
 3. 证金系列别名全部归一到 `csfc`，核心主体中只计一次；
 4. `effective_date == disclose_date >= report_period_end`；
 5. 名单新进/退出与被动变动均 `is_actionable=False`；
-6. 相同随机种子生成的演示数据完全一致。
+6. 相同随机种子生成的演示数据完全一致；
+7. 标的池恰为 7 只、代码唯一、`159845` 管理人必须为华夏；
+8. 量能 `summary.is_signal` 恒为 `False`，且输出文案不含买/卖/建仓等指令措辞；
+9. `signals.conditions` 集合恒为三重共振三条件，量能观测不得成为第四条件。

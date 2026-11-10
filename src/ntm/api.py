@@ -18,7 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from . import alert, backtest, config, db, layers
 from .adapters import get_adapter
 from .entities import as_dict as entities_as_dict
+from .etf_pool import POOL_CAVEAT, claims_as_dict, pool_as_dict, validate_pool
 from .models import Health, Overview, Signal
+from .reference import REFERENCE_STRATEGY
 from .scheduler import refresh_once, start_background_scheduler
 
 log = logging.getLogger("ntm.api")
@@ -94,6 +96,30 @@ def etf_shares(days: int = Query(30, ge=1, le=365)) -> dict:
     return {"is_demo": _is_demo(), "items": db.get_etf_series(days)}
 
 
+@app.get("/api/etf/pool")
+def etf_pool() -> dict:
+    """7 只宽基 ETF 结构化标的池 + 未确权参考观点 + 校验状态。"""
+    return {
+        "is_demo": _is_demo(),
+        "items": pool_as_dict(),
+        "claims": claims_as_dict(),
+        "caveat": POOL_CAVEAT,
+        "validation": validate_pool(),
+    }
+
+
+@app.get("/api/etf/momentum")
+def etf_momentum(day: str | None = Query(None)) -> dict:
+    """量能异动观测（L3 辅助）。明确 is_signal=False，非买卖信号。"""
+    return db.get_etf_momentum(day)
+
+
+@app.get("/api/reference/strategy")
+def reference_strategy() -> dict:
+    """参考策略原文存档与逐条实现取舍（含不实现项的合规理由）。"""
+    return REFERENCE_STRATEGY.as_dict()
+
+
 @app.get("/api/signals")
 def signals(days: int = Query(90, ge=1, le=1000)) -> dict:
     return {"is_demo": _is_demo(), "items": db.get_signals(days)}
@@ -117,6 +143,7 @@ def methodology() -> dict:
         "traps": list(layers.TRAPS),
         "noise": list(layers.NOISE),
         "entities": entities_as_dict(),
+        "reference_counts": REFERENCE_STRATEGY.disposition_counts,
         "disclaimer": config.DISCLAIMER,
     }
 

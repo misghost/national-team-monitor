@@ -40,15 +40,15 @@ SMTP_HOST = os.getenv("NTM_SMTP_HOST", "")
 SMTP_TO = os.getenv("NTM_SMTP_TO", "")
 ALERT_MAX_PER_DAY = int(os.getenv("NTM_ALERT_MAX_PER_DAY", "3"))
 
-# 核心宽基 ETF 观察池：国家队主要通过这些工具进场
-CORE_ETF = (
-    ("510300", "华泰柏瑞沪深300ETF"),
-    ("510050", "华夏上证50ETF"),
-    ("510500", "南方中证500ETF"),
-    ("512100", "南方中证1000ETF"),
-    ("588000", "华夏科创50ETF"),
-    ("159915", "易方达创业板ETF"),
-)
+# ---- 量能观察层（客观观测，不参与三重共振判定） ----
+VOLUME_SPIKE_MULTIPLE = float(os.getenv("NTM_VOLUME_SPIKE_MULTIPLE", "2.0"))
+VOLUME_MA_WINDOW = int(os.getenv("NTM_VOLUME_MA_WINDOW", "5"))
+
+# 核心宽基 ETF 观察池：7 只，结构化定义见 etf_pool.py。
+# 保留 (code, name) 二元组形式以兼容既有 demo 适配器与数据契约。
+from .etf_pool import ETF_POOL as _ETF_POOL  # noqa: E402  避免模块级循环导入
+
+CORE_ETF = tuple((e.code, e.name) for e in _ETF_POOL)
 
 # 明确排除：不是 A 股国家队账户主体
 EXCLUDED_ENTITIES = (

@@ -87,11 +87,34 @@ def cmd_check(_args) -> int:
     if any(s["is_confirmed"] for s in db.get_signals(days=10000)):
         problems.append("存在被标记为已确权的信号")
 
+    # 7. 标的池完整性、代码唯一、错误修正
+    from .etf_pool import ETF_POOL, instrument_by_code, validate_pool
+    from .momentum import MOMENTUM_CAVEAT, summarize, build_row
+    if len(ETF_POOL) != 7:
+        problems.append("标的池应为 7 只")
+    if validate_pool():
+        problems.append(f"标的池校验未通过：{validate_pool()}")
+    e = instrument_by_code("159845")
+    if e is None or "华夏" not in e.name or "易方达" in e.name:
+        problems.append("159845 未修正为华夏中证1000ETF")
+
+    # 8. 量能观测恒非信号、且不出现买卖指令措辞
+    probe = summarize("2026-11-09", [
+        build_row(code="510300", name="probe", current=100, previous=40,
+                  history=[40] * 5, share_change_yi=0.0),
+    ])
+    if probe.is_signal is not False:
+        problems.append("量能观测被误标为信号")
+    for word in ("买入", "卖出", "建仓", "目标价"):
+        if word in MOMENTUM_CAVEAT + probe.observation:
+            problems.append(f"量能输出含交易指令措辞：{word}")
+
     if problems:
         for p in problems:
             print(f"[FAIL] {p}", file=sys.stderr)
         return 1
-    print("[OK] 自检通过：实体去重 / 中投排除 / PIT 无前视 / 信号未确权 / 三层模型 / 历史信号一致")
+    print("[OK] 自检通过：实体去重 / 中投排除 / PIT 无前视 / 信号未确权 / "
+          "三层模型 / 历史信号一致 / 标的池7只且159845已修正 / 量能观测中性")
     return 0
 
 
