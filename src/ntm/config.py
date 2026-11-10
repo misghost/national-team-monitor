@@ -65,7 +65,12 @@ DATA_MIN_INTERVAL = float(os.getenv("NTM_DATA_MIN_INTERVAL", "1.0"))
 
 # ---- Wind MCP 适配器（data_source=wind_mcp 时生效）----
 def data_source() -> str:
-    """真实数据源类型；空字符串表示未选择（使用通用 HTTP 适配器）。"""
+    """真实数据源类型。
+
+    空字符串表示未选择（使用通用 HTTP 适配器，需 NTM_ENABLE_LIVE_ADAPTERS）。
+    ``wind_mcp`` 同样受该开关约束。``windpy`` / ``ifind`` 为个人终端适配器，
+    由工厂按本返回值直接选择；WindPy / iFinDPy 仅在取数时懒加载。
+    """
     return os.getenv("NTM_DATA_SOURCE", "").strip().lower()
 
 

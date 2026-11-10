@@ -2,6 +2,23 @@
 
 本项目遵循语义化版本。所有条目按时间倒序。
 
+## [Unreleased]
+
+### 新增
+
+- 个人节奏观察：`personal.py`、`scripts/daily_personal.py`、[`PERSONAL_USAGE.md`](PERSONAL_USAGE.md)。
+  分数综合指数跌幅、核心宽基净申购与人工核验公告，上限 85，不输出买卖指令。
+- 适配器 `windpy`（本机 Wind 终端）与 `ifind`（同花顺 iFinD）。
+  `NTM_DATA_SOURCE=windpy|ifind` 即可选择；WindPy / iFinDPy / 企业微信用的 `requests` 改为用到时再导入。
+
+### 适配
+
+- `get_etf_series` 给出的是按日汇总字段 `net_subscription_yi`，个人分数按该字段取值，避免净申购被读成 0。
+- `get_signals` 不含 `state_label`，日报输出前用既有状态枚举补上中文标签。
+- WindPy 读取人工维护的 `verified_announcements.json`；校验失败丢弃本次采集，不入库、不降级。
+- `wind_mcp` 与通用 HTTP 适配器仍必须设置 `NTM_ENABLE_LIVE_ADAPTERS`。个人终端适配器不使用这个开关。
+- iFinD 的 SDK 返回解析与 refresh_token HTTP 解析仍未完成，失败时明确报错。份额字段名未在本仓库用真实终端核对。
+
 ## [1.0.0] — 2026-11-10
 
 首个完整发布版本。

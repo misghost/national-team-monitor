@@ -9,8 +9,6 @@ import smtplib
 from email.message import EmailMessage
 from typing import Any
 
-import requests
-
 from . import config, db
 from .signals import POLICY_BOTTOM_PROBABLE
 
@@ -58,19 +56,29 @@ def dispatch(signal: dict, force: bool = False) -> list[dict]:
     db.insert_alert(day, state, "inbox", "sent")
     results.append({"channel": "inbox", "status": "sent"})
 
-    # 企业微信
+    # 企业微信。requests 只在确实要推送时导入，避免演示模式被可选依赖拖垮。
     if config.WECHAT_WEBHOOK:
+        status = "failed"
+        reason = None
         try:
-            r = requests.post(
-                config.WECHAT_WEBHOOK,
-                json={"msgtype": "text", "text": {"content": text}},
-                timeout=8,
-            )
-            status = "sent" if r.ok else "failed"
-        except Exception:  # noqa: BLE001
-            status = "failed"
+            import requests
+        except ImportError:
+            reason = "未安装 requests，无法发送企业微信"
+        else:
+            try:
+                r = requests.post(
+                    config.WECHAT_WEBHOOK,
+                    json={"msgtype": "text", "text": {"content": text}},
+                    timeout=8,
+                )
+                status = "sent" if r.ok else "failed"
+            except Exception:  # noqa: BLE001
+                status = "failed"
         db.insert_alert(day, state, "wecom", status)
-        results.append({"channel": "wecom", "status": status})
+        item: dict[str, Any] = {"channel": "wecom", "status": status}
+        if reason:
+            item["reason"] = reason
+        results.append(item)
     else:
         results.append({"channel": "wecom", "status": "skipped", "reason": "未配置 webhook"})
 

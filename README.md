@@ -19,6 +19,7 @@
 | 改判定逻辑 / 接数据源 | [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) |
 | 核对「某条规则为什么没实现」 | [`docs/REFERENCE_STRATEGY.md`](docs/REFERENCE_STRATEGY.md) |
 | 部署到服务器 | [`deploy/README.md`](deploy/README.md) |
+| 个人用 Wind / iFinD 看每日节奏 | [`PERSONAL_USAGE.md`](PERSONAL_USAGE.md) |
 | 凭据与漏洞报告 | [`SECURITY.md`](SECURITY.md) |
 
 ---
@@ -37,7 +38,7 @@ PYTHONPATH=src python3 -m ntm serve
 
 ```bash
 PYTHONPATH=src python3 -m ntm check     # 自检：实体去重/PIT/信号铁律
-python3 -m pytest -q                    # 95 项测试
+python3 -m pytest -q                    # 108 项测试
 curl http://localhost:8000/api/health
 ```
 
@@ -129,16 +130,19 @@ national-team-monitor/
 │   ├── backtest.py         # 防前视回测 + 基准对照
 │   ├── alert.py            # 企业微信/邮件/站内预警（去重降噪、频率上限）
 │   ├── scheduler.py        # 刷新编排 / 信号重算 / 历史快照累积
+│   ├── personal.py         # 个人节奏观察分数（公开代理，非买卖指令）
 │   ├── api.py              # FastAPI 14 个接口 + 静态页
 │   ├── adapters/
 │   │   ├── demo.py         # 默认合成演示数据
 │   │   ├── live.py         # 通用 HTTP 适配器（配置驱动，失败即停）
-│   │   └── wind_mcp.py     # Wind MCP 真实数据适配器（已实测核验）
+│   │   ├── wind_mcp.py     # Wind MCP 真实数据适配器（已实测核验）
+│   │   ├── windpy.py       # 本机 WindPy（可选，懒加载）
+│   │   └── ifind.py        # iFinD（可选，懒加载；解析需按终端微调）
 │   └── static/index.html   # 单页看板
-├── tests/                  # 95 项测试
+├── tests/                  # pytest
 ├── docs/                   # 完整说明书 / 方法论 / 数据字典 / 参考策略 / 修订提示词
 ├── deploy/                 # 部署脚本、Nginx、systemd、crontab、L3 确权模板
-├── scripts/                # GitHub 推送（git/API 双路径）、GitCode/Gitee 推送
+├── scripts/                # 个人日报 daily_personal.py；GitHub / GitCode 推送
 ├── Dockerfile / docker-compose.yml
 └── .github/workflows/ci.yml
 ```
@@ -188,12 +192,18 @@ python3 -m ntm check     # 自检：含标的池与量能中性约束
 
 ### 真实数据接入
 
-默认仍是演示数据，**系统不会把合成数据标成真实数据**。两种适配器：
+默认仍是演示数据，**系统不会把合成数据标成真实数据**。适配器：
 
 | 适配器 | 开关 | 状态 |
 |---|---|---|
-| `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp` | 已实现并实测核验 |
-| `src/ntm/adapters/live.py` | 留空 | 通用 HTTP/JSON 端点，由接入方按契约自行实现 |
+| `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp` 且 `NTM_ENABLE_LIVE_ADAPTERS=1` | 已实现并实测核验 |
+| `src/ntm/adapters/live.py` | 来源留空，且打开上面的总开关 | 通用 HTTP/JSON 端点，由接入方按契约自行实现 |
+| `src/ntm/adapters/windpy.py` | `NTM_DATA_SOURCE=windpy` | 本机 Wind 终端；字段名需自行用超级命令确认 |
+| `src/ntm/adapters/ifind.py` | `NTM_DATA_SOURCE=ifind` | 同花顺 iFinD；SDK 骨架，HTTP 解析未完成 |
+
+个人每日节奏（演示或 Wind / iFinD）见 [`PERSONAL_USAGE.md`](PERSONAL_USAGE.md)。
+`windpy` / `ifind` 不使用 `NTM_ENABLE_LIVE_ADAPTERS`；Wind MCP 与通用 HTTP 适配器仍要这个开关。
+账号、密码、refresh token 只放环境变量。
 
 #### Wind MCP（2026-11-10 实测核验）
 
