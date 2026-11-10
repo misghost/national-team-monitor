@@ -32,8 +32,22 @@ export NTM_DATA_VERIFIED=1
 # export NTM_WIND_SHARE_FIELD=f_unit_floortrading
 ```
 
-不需要 `NTM_ENABLE_LIVE_ADAPTERS`。该开关仍只约束 Wind MCP 与通用 HTTP 适配器。
+不需要 `NTM_ENABLE_LIVE_ADAPTERS`。该开关只约束未指定来源的通用 HTTP 适配器。
 Wind 终端自己的登录态由客户端保管，本程序不读取 Wind 账号密码。
+
+### Wind MCP（Linux 服务器，不需要本机 Wind 终端）
+
+托管地址是 `https://mcp.wind.com.cn/vserver_wind_tools/mcp/`。密钥只放 `NTM_WIND_MCP_KEY`，不要放进仓库。
+
+```bash
+export NTM_DEMO_MODE=0
+export NTM_DATA_SOURCE=wind_mcp
+export NTM_DATA_VERIFIED=1
+export NTM_WIND_MCP_KEY=你的Wind密钥
+PYTHONPATH=src python3 scripts/daily_personal.py
+```
+
+份额用已核对的 `fund_get_size`（场内流通份额，单位份）。指数日序列选用搜索结果里的 `securities_get_trend`；它的参数表在现有样本里不完整，程序只在这时再调 `market_search_tools`。
 
 ### iFinD
 
@@ -43,13 +57,32 @@ export NTM_DATA_SOURCE=ifind
 export NTM_DATA_VERIFIED=1
 export NTM_IFIND_USER=你的账号
 export NTM_IFIND_PASS=你的密码
-# 或使用 refresh_token 方式（HTTP 解析尚未完成，目前会明确失败而不是假装取到数）
-# export NTM_IFIND_REFRESH_TOKEN=xxx
-# 可选覆盖份额字段
-# export NTM_IFIND_SHARE_FIELD=ths_unit_floortrading_fund
 ```
 
-同时提供了账号密码和 refresh token 时，优先走 iFinDPy。
+有 refresh token 时走 HTTP，不再要求本机安装 iFinDPy。见下一节。
+
+## Linux 服务器：iFinD HTTP
+
+不需要 iFinDPy。令牌只放环境变量，进程里换到的 access_token 只留在内存。
+
+```bash
+export NTM_DEMO_MODE=0
+export NTM_DATA_SOURCE=ifind
+export NTM_DATA_VERIFIED=1
+export NTM_IFIND_REFRESH_TOKEN=你的refresh_token
+# 也认 ifind_api_refresh_token。已有 access_token 时可另设 ifind_api_access_token，
+# 失效时仍用 refresh_token 重换。
+#
+# 技能包 v1.1.0 没有收录「场内流通份额」和 IOPV 的指标代码。
+# 指数收盘价用文档里的 close。份额和净值必须你自己确认后填入，否则程序会失败停止：
+export NTM_IFIND_SHARE_FIELD=确认后的份额指标
+export NTM_IFIND_SHARE_PARAMS='[]'        # get_indicator_params 的顺序；没有参数就填 []
+export NTM_IFIND_NAV_FIELD=确认后的净值指标
+export NTM_IFIND_NAV_PARAMS='[]'
+PYTHONPATH=src python3 scripts/daily_personal.py
+```
+
+免费档按 10 次/秒/函数、合计 20 次/秒 节流。单次单元格上限默认 2000（技能包没写死这个数字，可用 `NTM_IFIND_MAX_CELLS` 改）。
 
 ## 日常使用
 
@@ -76,11 +109,9 @@ WindPy 历史快照写在 `data/windpy_history.json`（可用 `NTM_DATA_DIR` 改
 
 ## 已知限制
 
-- 份额字段默认名（Wind `f_unit_floortrading`、iFinD `ths_unit_floortrading_fund`）
-  没有在本仓库里用真实终端核对过，必须以你本机超级命令的结果为准。
-- iFinD 适配器目前是可运行骨架：SDK 能登录，但返回格式因版本而异，解析未完成时会
-  报错停止，**不会降级成演示数据**。见 `src/ntm/adapters/ifind.py`。
-- refresh_token 的 HTTP 通道同样会明确失败，直到按实际响应补上解析。
+- Wind 场内流通份额字段 `f_unit_floortrading` 已用 2026-11-10 的 510300.SH / 510050.SH 样本核对，单位是份。
+- iFinD 份额和净值指标代码**没有**出现在技能包 v1.1.0 里。不设置 `NTM_IFIND_SHARE_FIELD` / `NTM_IFIND_NAV_FIELD` 时会失败，不会猜一个字段名再写入空数据。
+- iFinDPy 的 SDK 返回格式仍未核对。服务器请用上面的 HTTP 通道。
 - 公告仍建议人工维护 `data/verified_announcements.json`（避免误用新闻标题）。
   WindPy 刷新会读取这份文件；系统不会根据标题自动判定 `is_supportive`。
 - 分数与阈值可在 `src/ntm/personal.py` 中自行调整。

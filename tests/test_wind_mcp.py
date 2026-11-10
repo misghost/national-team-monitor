@@ -73,7 +73,7 @@ class FakeClient:
         self.calls.append((tool_name, arguments))
         if tool_name in self.fail_on:
             raise LiveDataError("模拟 Wind 工具失败")
-        if tool_name == "get_index_kline":
+        if tool_name == "securities_get_trend":
             return kline_text()
         if tool_name == "fund_get_size":
             return size_text(self.size_day_override or arguments["asOfDate"])
@@ -148,7 +148,7 @@ def test_history_reuses_cached_days(adapter):
     adapter.fetch(AS_OF)
     # 第二次只保留 K 线，已缓存的交易日不再重复抓取
     assert len(adapter.client.calls) == 1
-    assert adapter.client.calls[0][0] == "get_index_kline"
+    assert adapter.client.calls[0][0] == "securities_get_trend"
     assert first_calls > 1
 
 
@@ -237,3 +237,135 @@ def test_wind_code_mapping():
     assert wm._wind_code("510300") == "510300.SH"
     assert wm._wind_code("159915") == "159915.SZ"
     assert wm._norm_code("588000.SH") == "588000"
+
+
+SAMPLE_SIZE_TABLE = """\
+## 查询结果
+
+### 数据结果
+| 序号 | 基金代码 | 基金简称 | 实际报告期 | 场内流通份额（份） | 当期场内流通份额变化（份） | 基金份额变动日期 | 上市基金规模(Wind计算)（元） |
+|---|---|---|---|---|---|---|---|
+| 1 | 510300.SH | 沪深300ETF华泰柏瑞 | 2026-09-30 | 46342387700 | -325800000 | 2026-11-10 | 191676749765.97 |
+| 2 | 510050.SH | 上证50ETF华夏 | 2026-09-30 | 16817166800 | 174600000 | 2026-11-10 | 48641973252.32 |
+"""
+
+
+def test_verified_fund_get_size_sample_units():
+    """附件 call_fund_get_size 的表：份额单位是份，规模单位是元。"""
+    rows = wm.parse_markdown_tables(SAMPLE_SIZE_TABLE)
+    assert len(rows) == 2
+    header, value = wm._find_cell(rows[0], "场内流通份额")
+    assert header == "场内流通份额（份）"
+    assert wm._num(value) == 46342387700
+    assert wm._share_multiplier(header) == 1
+    change_header, change = wm._find_cell(rows[0], "场内流通份额变化")
+    assert wm._num(change) == -325800000
+    assert "变化" in change_header
+    scale_header, scale = wm._find_cell(rows[0], "上市基金规模")
+    assert wm._num(scale) == pytest.approx(191676749765.97)
+    assert "元" in scale_header
+
+
+def test_share_header_wanfen_is_scaled():
+    assert wm._share_multiplier("基金份额（万份）") == 10_000
+    assert wm._yuan_to_yi("成交额（元）", 3.1e9) == pytest.approx(31)
+
+
+def test_sse_sample_decodes_utf8_markdown():
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {"content": [{"type": "text", "text": SAMPLE_SIZE_TABLE}], "isError": False},
+    }
+    raw = ("event: message\r\ndata: " + json.dumps(payload, ensure_ascii=False) + "\r\n\r\n").encode("utf-8")
+    decoded = wm.WindMCPClient._decode(raw)
+    text = decoded["result"]["content"][0]["text"]
+    assert "沪深300ETF华泰柏瑞" in text
+    assert wm.parse_markdown_tables(text)[0]["基金代码"] == "510300.SH"
+
+
+def test_call_tool_arguments_are_json_text(monkeypatch):
+    """tools/list 写明 market_call_tool.arguments 是 JSON 对象文本。"""
+    captured = {}
+
+    class Resp:
+        status_code = 200
+        content = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+        }).encode()
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["body"] = json
+        captured["headers"] = headers
+        return Resp()
+
+    monkeypatch.setattr(wm.requests, "post", fake_post)
+    client = wm.WindMCPClient("https://mcp.wind.com.cn/vserver_wind_tools/mcp/", "secret-key", 5, 0)
+    assert client.call("fund_get_size", {"windCodes": ["510300.SH"], "asOfDate": "2026-11-10"}) == "ok"
+    arguments = captured["body"]["params"]["arguments"]
+    assert captured["body"]["params"]["name"] == "market_call_tool"
+    assert arguments["toolName"] == "fund_get_size"
+    assert isinstance(arguments["arguments"], str)
+    assert json.loads(arguments["arguments"])["windCodes"] == ["510300.SH"]
+    assert captured["headers"]["Authorization"] == "Bearer secret-key"
+    assert "secret-key" not in client._public("failed secret-key")
+
+
+def test_batches_wind_codes(adapter):
+    adapter.code_batch = 2
+    adapter._fetch_day(adapter.client, AS_OF)
+    size_calls = [c for c in adapter.client.calls if c[0] == "fund_get_size"]
+    price_calls = [c for c in adapter.client.calls if c[0] == "fund_get_listed_historical_price"]
+    assert len(size_calls) == 4 and len(price_calls) == 4
+    assert all(len(c[1]["windCodes"]) <= 2 for c in size_calls)
+    assert size_calls[0][1]["includeFields"] == wm.SIZE_FIELDS
+    assert "f_etf_netasset" in wm.SIZE_FIELDS
+    assert "f_netasset_total2" not in wm.SIZE_FIELDS
+
+
+def test_index_search_is_only_a_fallback(adapter):
+    class SearchClient(FakeClient):
+        def search_tools(self, question, top_k=3):
+            return [{
+                "toolName": "securities_get_trend",
+                "score": 0.2,
+                "description": "指数历史序列",
+                "params": {
+                    "properties": {
+                        "windCode": {"type": "string"},
+                        "startDate": {"type": "string"},
+                        "endDate": {"type": "string"},
+                    },
+                    "required": ["windCode", "startDate", "endDate"],
+                },
+            }]
+
+    client = SearchClient()
+    adapter.client = client
+    adapter._fetch_kline(client, AS_OF)
+    args = client.calls[0][1]
+    assert client.calls[0][0] == "securities_get_trend"
+    assert args["windCode"] == "000300.SH"
+    assert "startDate" in args and "endDate" in args
+
+
+def test_markdown_index_table_computes_changes():
+    lines = ["| 日期 | 收盘价 | 成交额（元） |", "|---|---|---|"]
+    for i, day in enumerate(DAYS):
+        lines.append(f"| {day} | {4000 + i * 10} | {400000000000 + i * 1000000000} |")
+    market_points = wm._kline_points_from_markdown("\n".join(lines), AS_OF)
+    assert len(market_points) == len(DAYS)
+    assert market_points[-1]["_close"] == 4000 + (len(DAYS) - 1) * 10
+
+
+def test_live_client_requires_wind_mcp_key(monkeypatch):
+    monkeypatch.delenv("NTM_WIND_MCP_KEY", raising=False)
+    monkeypatch.setenv("NTM_DATA_API_KEY", "should-not-be-used")
+    monkeypatch.setenv("NTM_DATA_VERIFIED", "1")
+    with pytest.raises(LiveDataError) as exc:
+        wm.WindMCPAdapter().fetch(AS_OF)
+    assert "NTM_WIND_MCP_KEY" in str(exc.value)
+    assert "should-not-be-used" not in str(exc.value)

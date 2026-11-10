@@ -117,11 +117,8 @@ def test_existing_sources_still_require_live_switch(monkeypatch):
         get_adapter(demo=False)
 
     monkeypatch.setenv("NTM_DATA_SOURCE", "wind_mcp")
-    with pytest.raises(RuntimeError, match="NTM_ENABLE_LIVE_ADAPTERS"):
-        get_adapter(demo=False)
-
-    monkeypatch.setattr(live, "ENABLED", True)
     assert get_adapter(demo=False).name == "wind_mcp"
+    monkeypatch.setattr(live, "ENABLED", True)
     monkeypatch.delenv("NTM_DATA_SOURCE", raising=False)
     assert get_adapter(demo=False).name == "live_etf_share"
 
@@ -273,6 +270,11 @@ def test_ifind_unverified_stops_before_sdk(monkeypatch):
 
 def test_ifind_sdk_missing_and_token_path_do_not_leak(monkeypatch):
     monkeypatch.setenv("NTM_DATA_VERIFIED", "1")
+    monkeypatch.delenv("NTM_IFIND_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("ifind_api_refresh_token", raising=False)
+    monkeypatch.delenv("IFIND_API_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("ifind_api_access_token", raising=False)
+    monkeypatch.delenv("IFIND_API_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv("NTM_IFIND_USER", "user-demo")
     monkeypatch.setenv("NTM_IFIND_PASS", SECRET)
 
@@ -296,7 +298,8 @@ def test_ifind_sdk_missing_and_token_path_do_not_leak(monkeypatch):
     with pytest.raises(LiveDataError) as exc2:
         IFindAdapter().fetch("2026-11-10")
     message = str(exc2.value)
-    assert "refresh_token" in message
+    assert "TODO" in message
+    assert "NTM_IFIND_SHARE_FIELD" in message
     assert SECRET not in message
 
 

@@ -32,7 +32,12 @@ _SECRET_ENV = (
     "NTM_IFIND_PASS",
     "NTM_IFIND_REFRESH_TOKEN",
     "NTM_DATA_API_KEY",
+    "NTM_WIND_MCP_KEY",
     "NTM_WECHAT_WEBHOOK",
+    "ifind_api_refresh_token",
+    "IFIND_API_REFRESH_TOKEN",
+    "ifind_api_access_token",
+    "IFIND_API_ACCESS_TOKEN",
 )
 
 

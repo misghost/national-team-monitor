@@ -13,7 +13,8 @@
 
 | 凭据 | 用途 | 正确放置方式 |
 |---|---|---|
-| `NTM_DATA_API_KEY` | Wind MCP / 通用数据源 | 服务端 `.env`，权限 `640 root:<运行用户>`，由 systemd `EnvironmentFile` 注入 |
+| `NTM_DATA_API_KEY` | 通用 HTTP 数据源 | 服务端 `.env`，权限 `640 root:<运行用户>`，由 systemd `EnvironmentFile` 注入 |
+| `NTM_WIND_MCP_KEY` | Wind 托管 MCP | 仅环境变量。不写入日志、历史文件或仓库 |
 | `NTM_IFIND_USER` / `NTM_IFIND_PASS` | iFinD Python SDK 登录 | 仅环境变量或本机未提交的 `.env` |
 | `NTM_IFIND_REFRESH_TOKEN` | iFinD HTTP（解析未完成，失败即停） | 仅环境变量；日志与历史文件不得出现该值 |
 | `GITHUB_TOKEN` / `GITCODE_TOKEN` / `GITEE_TOKEN` | 推送代码 | 环境变量或权限 `600` 的临时文件，用完即删 |

@@ -5,15 +5,18 @@
 ``datasource.validate_dataset`` 校验；任何一步失败都抛 ``LiveDataError``
 并停止采集，**绝不降级回演示数据、绝不用合成数据填充**。
 
-取数口径（2026-11-10 实测核验）：
-- 条件① 市场：`get_index_kline`（000300.SH 日 K），一次取回区间序列，
-  由收盘价自行计算 1 日 / 5 日涨跌幅；成交额 TURNOVER 单位为元。
-- L2 份额：`fund_get_size` 的「场内流通份额（份）」= total_share，
-  「当期场内流通份额变化（份）」= share_change，
-  「基金份额变动日期」= 真实数据日期（非交易日会回退，以返回值为准）。
-  **不使用成交额、成交量、主力资金流入等二级市场字段顶替 total_share。**
-- 净值与量能：`fund_get_listed_historical_price` 的 IOPV 作为 nav，
-  成交额（元）换算为 amount_yi（亿元），仅供量能观测，不参与共振判定。
+取数口径（托管 MCP，2026-11-10 实测）：
+- 端点 ``https://mcp.wind.com.cn/vserver_wind_tools/mcp/``。
+  只有 ``market_search_tools`` 与 ``market_call_tool``。后者的 ``arguments``
+  是 JSON 对象文本（tools/list 已核对）。
+- L2 份额：``fund_get_size`` 的场内流通份额（份）、当期变化（份）、
+  份额变动日期、上市基金规模（元）。样本见 510300.SH / 510050.SH。
+  **不使用成交额或资金流顶替 total_share。**
+- 净值与量能：``fund_get_listed_historical_price`` 的 IOPV（元）与成交额（元）。
+- 指数序列：搜索样本里覆盖指数区间的工具是 ``securities_get_trend``。
+  该工具的参数定义在附件里被截断，所以只有调用失败或本地没有参数定义时
+  才回退 ``market_search_tools``。旧的 ``get_index_kline`` JSON 仍能解析，
+  供已有测试使用。
 - L3 官方公告：系统**不自动判定** is_supportive。仅从
   ``data/verified_announcements.json`` 读取人工核验后的记录；
   文件不存在即为空列表。这是防止「用新闻标题伪造确权」的刻意设计。
@@ -41,14 +44,18 @@ from .. import config
 from ..datasource import LiveDataError, validate_dataset
 from .base import BaseAdapter, FetchResult
 
-SOURCE_NAME = "wind-mcp:fund_get_size+get_index_kline+fund_get_listed_historical_price"
+SOURCE_NAME = "wind-mcp:fund_get_size+securities_get_trend+fund_get_listed_historical_price"
 INDEX_CODE = "000300.SH"
+INDEX_TOOL = "securities_get_trend"
 HISTORY_FILENAME = "wind_history.json"
 ANNOUNCEMENT_FILENAME = "verified_announcements.json"
+# fund_get_listed_historical_price 的 windCodes.maxItems 在搜索样本里是 50。
+# fund_get_size 的同字段上限在附件里被截断，先沿用 50，7 只标的一次就够。
+CODE_BATCH = 50
 
 SIZE_FIELDS = [
     "f_unit_floortrading", "f_unit_floortradingchange",
-    "f_unit_changedate", "f_netasset_total2",
+    "f_unit_changedate", "f_etf_netasset",
 ]
 PRICE_FIELDS = ["f_dq_amount", "f_dq_close", "f_nav_iopv"]
 
@@ -125,9 +132,197 @@ def parse_markdown_tables(text: str) -> list[dict[str, str]]:
 
 
 def _find(row: dict[str, str], *keywords: str) -> str | None:
+    header, value = _find_cell(row, *keywords)
+    return value if header else None
+
+
+def _find_cell(row: dict[str, str], *keywords: str) -> tuple[str | None, str | None]:
     # 取列名最短的匹配项，避免「场内流通份额」误命中「当期场内流通份额变化」。
     hits = [(len(k), k, v) for k, v in row.items() if all(x in k for x in keywords)]
-    return min(hits)[2] if hits else None
+    if not hits:
+        return None, None
+    _, header, value = min(hits)
+    return header, value
+
+
+def _share_multiplier(header: str) -> float:
+    """表头单位：份按原值，万份 ×10000，亿份 ×1e8。样本列是「（份）」。"""
+    if "亿份" in header:
+        return 1e8
+    if "万份" in header:
+        return 1e4
+    return 1.0
+
+
+def _yuan_to_yi(header: str, amount: float) -> float:
+    """成交额或规模换成亿元。样本列单位是元。"""
+    if "亿元" in header:
+        return amount
+    if "万元" in header:
+        return amount / 1e4
+    return amount / 1e8
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    step = max(1, size)
+    return [items[i:i + step] for i in range(0, len(items), step)]
+
+
+def parse_tool_search(text: str) -> list[dict[str, Any]]:
+    """解析 market_search_tools 文本里的 JSON 行。"""
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        raise LiveDataError("market_search_tools 返回的不是 JSON，已停止采集") from None
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise LiveDataError("market_search_tools 缺少 rows，已停止采集")
+    out = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 5 or not isinstance(row[4], dict):
+            continue
+        out.append({
+            "toolName": str(row[0]),
+            "score": row[2],
+            "description": str(row[3]),
+            "params": row[4],
+        })
+    if not out:
+        raise LiveDataError("market_search_tools 没有可用工具定义，已停止采集")
+    return out
+
+
+def select_index_schema(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """优先用搜索样本里点名的 securities_get_trend，否则取得分最高且提到指数的工具。"""
+    for row in rows:
+        if row["toolName"] == INDEX_TOOL:
+            return row["params"]
+    ranked = [row for row in rows if "指数" in row["description"]]
+    if not ranked:
+        raise LiveDataError("搜索结果里没有指数历史序列工具，已停止采集")
+    ranked.sort(key=lambda row: float(row["score"] or 0), reverse=True)
+    return ranked[0]["params"]
+
+
+def arguments_from_schema(schema: dict[str, Any], code: str, begin: str, end: str) -> dict[str, Any]:
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(properties, dict) or not properties:
+        raise LiveDataError("指数工具参数定义为空，已停止采集")
+    required = set(schema.get("required") or [])
+    args: dict[str, Any] = {}
+    for name, spec in properties.items():
+        if not isinstance(spec, dict):
+            continue
+        lname = name.lower()
+        kind = spec.get("type")
+        desc = str(spec.get("description") or "")
+        if kind == "array" and ("code" in lname or "代码" in desc):
+            args[name] = [code]
+        elif kind == "string" and "code" in lname:
+            args[name] = code
+        elif any(token in lname for token in ("start", "begin", "from")):
+            args[name] = begin
+        elif "end" in lname:
+            args[name] = end
+    missing = sorted(name for name in required if name not in args)
+    if missing:
+        raise LiveDataError("指数工具必填参数无法匹配：" + ",".join(missing))
+    if not args:
+        raise LiveDataError("指数工具参数无法从定义中对应到代码和日期，已停止采集")
+    return args
+
+
+def _markdown_dicts(text: str) -> list[dict[str, str]]:
+    tables: list[list[list[str]]] = []
+    cur: list[list[str]] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith("|") and s.endswith("|"):
+            cur.append([c.strip() for c in s.strip("|").split("|")])
+        elif cur:
+            tables.append(cur)
+            cur = []
+    if cur:
+        tables.append(cur)
+    rows: list[dict[str, str]] = []
+    for table in tables:
+        if len(table) < 2:
+            continue
+        header = table[0]
+        body = [r for r in table[1:] if not all(re.fullmatch(r":?-{2,}:?", c or "") for c in r)]
+        for r in body:
+            if len(r) != len(header):
+                continue
+            rows.append({h: r[i] for i, h in enumerate(header)})
+    return rows
+
+
+def _kline_points(text: str, as_of: str) -> list[dict[str, Any]]:
+    """指数序列。优先识别旧版列式 JSON；否则按 Markdown 表的日期/收盘价列。"""
+    stripped = (text or "").strip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            if payload.get("error"):
+                raise LiveDataError("指数序列返回错误，已停止采集")
+            return _kline_points_from_columns(payload["data"], as_of)
+    return _kline_points_from_markdown(stripped, as_of)
+
+
+def _kline_points_from_columns(block: dict[str, Any], as_of: str) -> list[dict[str, Any]]:
+    cols = [c.get("name", "") for c in block.get("columns", [])]
+    rows = block.get("rows", [])
+    if not rows or "TIME" not in cols or "MATCH" not in cols:
+        raise LiveDataError("指数序列未返回 TIME/MATCH 列，已停止采集")
+    i_time, i_close = cols.index("TIME"), cols.index("MATCH")
+    i_turn = cols.index("TURNOVER") if "TURNOVER" in cols else None
+    series = []
+    for r in rows:
+        day = str(r[i_time])[:10]
+        if day > as_of:
+            continue
+        close = _num(r[i_close])
+        if close is None or close <= 0:
+            continue
+        series.append({
+            "date": day,
+            "_close": close,
+            "_amount": _num(r[i_turn]) if i_turn is not None else None,
+        })
+    return series
+
+
+def _kline_points_from_markdown(text: str, as_of: str) -> list[dict[str, Any]]:
+    rows = _markdown_dicts(text)
+    if not rows:
+        raise LiveDataError("指数序列没有可解析的 Markdown 表，已停止采集")
+    header = list(rows[0])
+    date_key = next((h for h in header if "日期" in h or h.upper() == "TIME"), None)
+    close_key = next((h for h in header if "收盘" in h or h.upper() == "MATCH"), None)
+    amount_key = next((h for h in header if "成交额" in h or h.upper() == "TURNOVER"), None)
+    if not date_key or not close_key:
+        raise LiveDataError(
+            "指数 Markdown 表缺少日期或收盘价列（表头：" + "、".join(header) + "），已停止采集"
+        )
+    series = []
+    for row in rows:
+        day = str(row.get(date_key) or "")[:10]
+        if not day or day > as_of:
+            continue
+        close = _num(row.get(close_key))
+        if close is None or close <= 0:
+            continue
+        amount = _num(row.get(amount_key)) if amount_key else None
+        if amount is not None and amount_key and "亿" in amount_key:
+            amount *= 1e8
+        elif amount is not None and amount_key and "万" in amount_key:
+            amount *= 1e4
+        series.append({"date": day, "_close": close, "_amount": amount})
+    series.sort(key=lambda item: item["date"])
+    return series
 
 
 class WindMCPClient:
@@ -159,13 +354,18 @@ class WindMCPClient:
             # 只暴露异常类型，绝不回显 URL / 请求头 / 凭据
             raise LiveDataError(f"Wind MCP 请求失败（{type(exc).__name__}），已停止采集") from None
         if resp.status_code != 200:
-            raise LiveDataError(f"Wind MCP 返回 HTTP {resp.status_code}，已停止采集")
+            raise LiveDataError(self._public(f"Wind MCP 返回 HTTP {resp.status_code}，已停止采集"))
 
         data = self._decode(resp.content)
         if "error" in data:
             code = (data["error"] or {}).get("code", "unknown")
             raise LiveDataError(f"Wind MCP 返回错误（code={code}），已停止采集")
         return data
+
+    def _public(self, message: str) -> str:
+        if self.key and self.key in message:
+            return message.replace(self.key, "***")
+        return message
 
     @staticmethod
     def _decode(content: bytes) -> dict[str, Any]:
@@ -231,7 +431,26 @@ class WindMCPClient:
         text = "\n".join(texts).strip()
         if not text:
             raise LiveDataError(f"Wind 工具 {tool_name} 未返回数据，已停止采集")
-        return text
+        return self._public(text)
+
+    def search_tools(self, question: str, top_k: int = 3) -> list[dict[str, Any]]:
+        """market_search_tools。只在指数工具参数定义不完整时调用。"""
+        self._id += 1
+        self._throttle()
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": "tools/call",
+            "params": {
+                "name": "market_search_tools",
+                "arguments": {"question": question, "topK": top_k},
+            },
+        }
+        result = self._post(payload).get("result", {})
+        if result.get("isError"):
+            raise LiveDataError("market_search_tools 返回错误，已停止采集")
+        texts = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
+        return parse_tool_search(self._public("\n".join(texts)))
 
 
 class WindMCPAdapter(BaseAdapter):
@@ -247,16 +466,17 @@ class WindMCPAdapter(BaseAdapter):
         self.wind_codes = [_wind_code(code) for code, _ in config.CORE_ETF]
         self.pool = {code: name for code, name in config.CORE_ETF}
         self.backfill_days = config.wind_backfill_days()
+        self.code_batch = CODE_BATCH
+        self._index_schema: dict[str, Any] | None = None
 
     # ---------- 配置闸门 ----------
     def _build_client(self) -> WindMCPClient:
         if self.client is not None:
             return self.client
-        endpoint = config.data_endpoint()
-        key = config.data_api_key()
-        if not endpoint or not key:
+        key = config.wind_mcp_key()
+        if not key:
             raise LiveDataError(
-                "Wind MCP 未配置：需要 NTM_DATA_ENDPOINT 与 NTM_DATA_API_KEY。"
+                "Wind MCP 未配置：需要 NTM_WIND_MCP_KEY。"
                 "系统已停止采集，不会降级到演示数据。"
             )
         if not config.data_verified():
@@ -264,7 +484,7 @@ class WindMCPAdapter(BaseAdapter):
                 "NTM_DATA_VERIFIED=0：数据源核验清单未完成。已停止采集，不会降级到演示数据。"
             )
         return WindMCPClient(
-            endpoint, key, config.WIND_MCP_TIMEOUT, config.WIND_MCP_MIN_INTERVAL
+            config.wind_mcp_endpoint(), key, config.WIND_MCP_TIMEOUT, config.WIND_MCP_MIN_INTERVAL
         )
 
     # ---------- 历史快照 ----------
@@ -285,42 +505,23 @@ class WindMCPAdapter(BaseAdapter):
         tmp.replace(self.history_path)
 
     # ---------- 各层取数 ----------
+    def _index_arguments(self, client: WindMCPClient, begin: str, end: str) -> dict[str, Any]:
+        """securities_get_trend 的参数定义在附件中被截断，所以只在需要时搜索。"""
+        if self._index_schema is None and hasattr(client, "search_tools"):
+            rows = client.search_tools("沪深300指数 000300.SH 日收盘价历史序列", top_k=3)
+            self._index_schema = select_index_schema(rows)
+        if self._index_schema:
+            return arguments_from_schema(self._index_schema, INDEX_CODE, begin, end)
+        # 假客户端没有 search_tools。键名是假设，真实调用会走上面的搜索。
+        return {"windCode": INDEX_CODE, "startDate": begin, "endDate": end}
+
     def _fetch_kline(self, client: WindMCPClient, as_of: str) -> list[dict[str, Any]]:
         end = date.fromisoformat(as_of)
-        begin = end - timedelta(days=config.wind_kline_days())
-        text = client.call("get_index_kline", {
-            "windcode": INDEX_CODE,
-            "begin_date": begin.isoformat(),
-            "end_date": end.isoformat(),
-            "period": "1d",
-            "count": 90,
-        })
-        try:
-            payload = json.loads(text)
-        except ValueError:
-            raise LiveDataError("get_index_kline 返回非结构化 JSON，已停止采集") from None
-        if payload.get("error"):
-            raise LiveDataError("get_index_kline 返回错误，已停止采集")
-        block = payload.get("data") or {}
-        cols = [c.get("name", "") for c in block.get("columns", [])]
-        rows = block.get("rows", [])
-        if not rows or "TIME" not in cols or "MATCH" not in cols:
-            raise LiveDataError("get_index_kline 未返回有效 K 线序列，已停止采集")
-        i_time, i_close = cols.index("TIME"), cols.index("MATCH")
-        i_turn = cols.index("TURNOVER") if "TURNOVER" in cols else None
-
-        series: list[dict[str, Any]] = []
-        for r in rows:
-            day = str(r[i_time])[:10]
-            if day > as_of:  # 防前视：绝不使用晚于基准日的数据
-                continue
-            close = _num(r[i_close])
-            if close is None or close <= 0:
-                continue
-            series.append({"date": day, "_close": close,
-                           "_amount": _num(r[i_turn]) if i_turn is not None else None})
+        begin = (end - timedelta(days=config.wind_kline_days())).isoformat()
+        text = client.call(INDEX_TOOL, self._index_arguments(client, begin, as_of))
+        series = _kline_points(text, as_of)
         if len(series) < 6:
-            raise LiveDataError("get_index_kline 有效交易日不足 6 天，无法计算 5 日涨跌幅，已停止采集")
+            raise LiveDataError("指数序列有效交易日不足 6 天，无法计算 5 日涨跌幅，已停止采集")
 
         closes = [r["_close"] for r in series]  # 先固化，避免下方 pop 影响前一日取值
         for i, row in enumerate(series):
@@ -339,20 +540,24 @@ class WindMCPAdapter(BaseAdapter):
 
     def _fetch_day(self, client: WindMCPClient, day: str) -> tuple[str, dict[str, dict[str, Any]]] | None:
         """取单个交易日的 7 只 ETF 份额与行情。返回 (真实数据日期, 快照)。"""
-        size_text = client.call("fund_get_size", {
-            "windCodes": self.wind_codes,
-            "asOfDate": day,
-            "includeFields": SIZE_FIELDS,
-        })
-        price_text = client.call("fund_get_listed_historical_price", {
-            "windCodes": self.wind_codes,
-            "tradeDate": day,
-            "includeFields": PRICE_FIELDS,
-        })
-        size_rows = parse_markdown_tables(size_text)
-        price_rows = parse_markdown_tables(price_text)
-        if not size_rows:
-            raise LiveDataError(f"fund_get_size({day}) 未返回可解析表格，已停止采集")
+        size_rows: list[dict[str, str]] = []
+        price_rows: list[dict[str, str]] = []
+        for batch in _chunks(self.wind_codes, self.code_batch):
+            size_text = client.call("fund_get_size", {
+                "windCodes": batch,
+                "asOfDate": day,
+                "includeFields": SIZE_FIELDS,
+            })
+            price_text = client.call("fund_get_listed_historical_price", {
+                "windCodes": batch,
+                "tradeDate": day,
+                "includeFields": PRICE_FIELDS,
+            })
+            parsed_size = parse_markdown_tables(size_text)
+            if not parsed_size:
+                raise LiveDataError(f"fund_get_size({day}) 未返回可解析表格，已停止采集")
+            size_rows.extend(parsed_size)
+            price_rows.extend(parse_markdown_tables(price_text))
 
         # ETF 份额是 T+1 数据：当日盘后尚未发布时，Wind 会把「基金份额变动日期」
         # 回退到上一交易日，且「当期场内流通份额变化」返回 "--"。这是正常状态，
@@ -379,14 +584,29 @@ class WindMCPAdapter(BaseAdapter):
             code = _norm_code(raw_code)
             if code not in self.pool:
                 continue
-            total_share = _num(_find(row, *COL_SHARE_KEYS))
-            share_change = _num(_find(row, *COL_CHANGE_KEYS))
+            share_header, share_raw = _find_cell(row, *COL_SHARE_KEYS)
+            change_header, change_raw = _find_cell(row, *COL_CHANGE_KEYS)
+            total_share = _num(share_raw)
+            share_change = _num(change_raw)
+            if total_share is not None and share_header:
+                total_share *= _share_multiplier(share_header)
+            if share_change is not None and change_header:
+                share_change *= _share_multiplier(change_header)
             changedate = (_find(row, *COL_CHANGEDATE_KEYS) or "").strip()
-            scale = _num(_find(row, *COL_SCALE_KEYS))
+            scale_header, scale_raw = _find_cell(row, "上市基金规模")
+            if scale_raw is None:
+                scale_header, scale_raw = _find_cell(row, *COL_SCALE_KEYS)
+            scale = _num(scale_raw)
             price = prices.get(code, {})
             iopv = _num(_find(price, *COL_IOPV_KEYS))
             close = _num(_find(price, *COL_CLOSE_KEYS))
-            amount = _num(_find(price, *COL_AMOUNT_KEYS))
+            amount_header, amount_raw = _find_cell(price, *COL_AMOUNT_KEYS)
+            amount = _num(amount_raw)
+            if scale is not None and scale_header:
+                if "亿元" in scale_header:
+                    scale *= 1e8
+                elif "万元" in scale_header:
+                    scale *= 1e4
             # nav 优先 IOPV（净值口径），其次收盘价，最后用 规模/份额 兜底
             nav = iopv or close or (scale / total_share if scale and total_share else None)
             if not (total_share and total_share > 0 and nav and nav > 0
@@ -406,7 +626,7 @@ class WindMCPAdapter(BaseAdapter):
                 "total_share": total_share,
                 "share_change": share_change,
                 "nav": nav,
-                "amount_yi": round(amount / 1e8, 4) if amount is not None else 0.0,
+                "amount_yi": round(_yuan_to_yi(amount_header or "元", amount), 4) if amount is not None else 0.0,
                 "est_net_yi": round(share_change * nav / 1e8, 4),
             }
         if not funds or not actual_date:

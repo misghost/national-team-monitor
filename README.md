@@ -38,7 +38,7 @@ PYTHONPATH=src python3 -m ntm serve
 
 ```bash
 PYTHONPATH=src python3 -m ntm check     # 自检：实体去重/PIT/信号铁律
-python3 -m pytest -q                    # 108 项测试
+python3 -m pytest -q                    # 124 项测试
 curl http://localhost:8000/api/health
 ```
 
@@ -196,14 +196,14 @@ python3 -m ntm check     # 自检：含标的池与量能中性约束
 
 | 适配器 | 开关 | 状态 |
 |---|---|---|
-| `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp` 且 `NTM_ENABLE_LIVE_ADAPTERS=1` | 已实现并实测核验 |
+| `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp`，密钥 `NTM_WIND_MCP_KEY` | 托管 MCP。份额字段已按 2026-11-10 样本核对 |
 | `src/ntm/adapters/live.py` | 来源留空，且打开上面的总开关 | 通用 HTTP/JSON 端点，由接入方按契约自行实现 |
 | `src/ntm/adapters/windpy.py` | `NTM_DATA_SOURCE=windpy` | 本机 Wind 终端；字段名需自行用超级命令确认 |
-| `src/ntm/adapters/ifind.py` | `NTM_DATA_SOURCE=ifind` | 同花顺 iFinD；SDK 骨架，HTTP 解析未完成 |
+| `src/ntm/adapters/ifind.py` | `NTM_DATA_SOURCE=ifind` | HTTP refresh_token；份额/净值指标需自行确认 |
 
-个人每日节奏（演示或 Wind / iFinD）见 [`PERSONAL_USAGE.md`](PERSONAL_USAGE.md)。
-`windpy` / `ifind` 不使用 `NTM_ENABLE_LIVE_ADAPTERS`；Wind MCP 与通用 HTTP 适配器仍要这个开关。
-账号、密码、refresh token 只放环境变量。
+个人每日节奏（演示、Wind MCP 或 iFinD HTTP）见 [`PERSONAL_USAGE.md`](PERSONAL_USAGE.md)。
+`windpy` / `ifind` / `wind_mcp` 不使用 `NTM_ENABLE_LIVE_ADAPTERS`；未指定来源的通用 HTTP 适配器仍要这个开关。
+账号、密码、refresh token、Wind MCP 密钥只放环境变量。
 
 #### Wind MCP（2026-11-10 实测核验）
 
@@ -211,21 +211,21 @@ python3 -m ntm check     # 自检：含标的池与量能中性约束
 
 ```ini
 NTM_DEMO_MODE=0
-NTM_ENABLE_LIVE_ADAPTERS=1
 NTM_DATA_SOURCE=wind_mcp
-NTM_DATA_ENDPOINT=https://mcp.wind.com.cn/vserver_wind_tools/mcp/
-NTM_DATA_API_KEY=<Wind 后台生成的长期 API Key>
+NTM_WIND_MCP_KEY=<Wind 后台生成的长期 API Key>
 NTM_DATA_VERIFIED=1
 NTM_WIND_BACKFILL_DAYS=12
 NTM_WIND_KLINE_DAYS=120
 ```
 
+端点默认是 `https://mcp.wind.com.cn/vserver_wind_tools/mcp/`。密钥不要写入仓库。
+
 字段映射与已知边界：
 
-- `get_index_kline` → 沪深300日K → 收盘价、1日/5日涨跌幅、成交额（条件①）
-- `fund_get_size` → **场内流通份额** `f_unit_floortrading` → `total_share`，
-  当日份额变化 `f_unit_floortradingchange` → `share_change`。这是 L2 核心，
-  日频且可按 `asOfDate` 回溯；**绝不用成交额或资金流顶替份额**
+- `securities_get_trend` → 沪深300日序列 → 收盘价，自行计算 1 日/5 日涨跌幅。参数定义不完整时才调用 `market_search_tools`
+- `fund_get_size` → **场内流通份额** `f_unit_floortrading`（份）→ `total_share`，
+  当日份额变化 `f_unit_floortradingchange`（份）→ `share_change`，
+  `f_etf_netasset` 为上市基金规模（元）。日频且可按 `asOfDate` 回溯；**绝不用成交额或资金流顶替份额**
 - `fund_get_listed_historical_price` → IOPV → `nav`，成交额 → `amount_yi`（量能观测）
 - `db.save_dataset` 是全量替换，适配器把每日快照累积在 `data/wind_history.json`，
   刷新时只补抓缺失交易日，避免清空历史序列导致图表与 5 日跌幅失效

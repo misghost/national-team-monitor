@@ -1,16 +1,15 @@
 """iFinD 适配器（个人使用）。
 
-支持两种方式（优先 Python SDK）：
-1. iFinDPy 本地登录（THS_iFinDLogin）
-2. 通过环境变量配置的 HTTP API（refresh_token）
+两条路：
+1. Linux 服务器：HTTP refresh_token（不需要 iFinDPy）。见 ifind_http.py。
+2. 本机已装 iFinDPy 且只配置了账号密码时，走 SDK。SDK 的返回格式仍未在本仓库核对，
+   未核对完会失败停止，不会写入空数据。
 
-取数口径与 Wind 适配器保持一致：
-- 指数：历史行情
-- ETF 场内流通份额（字段需用户在超级命令确认后通过环境变量覆盖）
-- 净值用于计算估算净申购额
+指数收盘价使用技能包确认过的历史行情指标 ``close``。
+场内流通份额和净值的指标代码不在 v1.1.0 参考文档里，必须由环境变量显式给出，
+否则直接失败。
 
 凭据只从环境变量读取，绝不硬编码、不打印、不落盘，也不挂到实例属性上。
-iFinDPy / requests 均懒加载：未选择 ifind 时，缺少这两个包不影响导入与演示模式。
 """
 from __future__ import annotations
 
@@ -21,19 +20,34 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
-from ..datasource import LiveDataError, validate_dataset  # noqa: F401  解析补齐后必须过这道闸门
+from ..datasource import LiveDataError, validate_dataset
 from .base import BaseAdapter, FetchResult
+from .ifind_http import (
+    CONFIRMED_DS_INDICATOR,
+    IFindHttp,
+    http_credentials_configured,
+    scrub,
+)
 
-SOURCE_NAME = "ifind"
+SOURCE_NAME = "ifind:http"
 INDEX_CODE = "000300.SH"
 HISTORY_FILENAME = "ifind_history.json"
+ANNOUNCEMENT_FILENAME = "verified_announcements.json"
 
-# 常见份额字段候选（iFinD 命名可能不同，优先用环境变量覆盖）
-SHARE_FIELD_CANDIDATES = (
-    "ths_unit_floortrading_fund",
-    "ths_fund_unit_floortrading",
-    "unit_floortrading",
-    "ths_fund_shares_fund",
+# TODO: 技能包 v1.1.0 的 references 没有 ETF 场内流通份额或 IOPV 的指标代码。
+# 已确认的日期序列示例只有股票收盘价 ths_close_price_stock，不能当作份额。
+# 未设置下面两个环境变量时拒绝取数，避免把猜测字段写成空数据或错误数据。
+SHARE_FIELD_TODO = (
+    "TODO: iFinD 技能包 v1.1.0 未列出场内流通份额指标。"
+    f"已确认的日期序列示例是 {CONFIRMED_DS_INDICATOR}（股票收盘价），不能顶替份额。"
+    "请在指标搜索里确认英文代码后设置 NTM_IFIND_SHARE_FIELD，"
+    "并用 get_indicator_params 的顺序设置 NTM_IFIND_SHARE_PARAMS"
+    "（无参数时填 []）。未确认前不会入库。"
+)
+NAV_FIELD_TODO = (
+    "TODO: iFinD 技能包 v1.1.0 未列出 ETF IOPV/单位净值指标。"
+    "历史行情文档确认了 close，但收盘价不是份额对应的净值。"
+    "请设置 NTM_IFIND_NAV_FIELD，以及 NTM_IFIND_NAV_PARAMS（无参数时填 []）。"
 )
 
 
@@ -61,19 +75,12 @@ class IFindAdapter(BaseAdapter):
     name = "ifind"
     verified = True
 
-    def __init__(self, history_path: Path | None = None):
+    def __init__(self, history_path: Path | None = None, http: IFindHttp | None = None):
         self.history_path = history_path or (config.DATA_DIR / HISTORY_FILENAME)
+        self.announcement_path = config.DATA_DIR / ANNOUNCEMENT_FILENAME
         self.pool = {code: name for code, name in config.CORE_ETF}
         self.backfill_days = config.wind_backfill_days()
-
-    def _require_requests(self):
-        try:
-            import requests
-        except ImportError as exc:
-            raise LiveDataError(
-                "未安装 requests，无法使用 iFinD HTTP refresh_token 方式。"
-            ) from exc
-        return requests
+        self._http = http
 
     def _connect_sdk(self, username: str, password: str):
         try:
@@ -91,8 +98,24 @@ class IFindAdapter(BaseAdapter):
         # 若已在终端登录，部分环境可不显式登录
         return True
 
-    def _share_field(self) -> str:
-        return _env("NTM_IFIND_SHARE_FIELD") or SHARE_FIELD_CANDIDATES[0]
+    def _indicator_spec(self, field_env: str, params_env: str, missing: str) -> tuple[str, list[str]]:
+        name = _env(field_env)
+        if not name:
+            raise LiveDataError(missing)
+        raw = _env(params_env)
+        if raw == "":
+            raise LiveDataError(missing)
+        if raw == "[]":
+            return name, []
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                raise LiveDataError(f"{params_env} 不是合法 JSON 数组") from None
+            if not isinstance(parsed, list):
+                raise LiveDataError(f"{params_env} 必须是 JSON 数组")
+            return name, [str(item) for item in parsed]
+        return name, [part.strip() for part in raw.split(",") if part.strip()]
 
     def _load_history(self) -> dict[str, Any]:
         if self.history_path.exists():
@@ -129,6 +152,119 @@ class IFindAdapter(BaseAdapter):
             "建议先用超级命令确认字段后修改 _fetch_kline_sdk。"
         )
 
+    def _manual_announcements(self, as_of: str) -> list[dict[str, Any]]:
+        if not self.announcement_path.exists():
+            return []
+        try:
+            items = json.loads(self.announcement_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        if not isinstance(items, list):
+            return []
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not all(k in item for k in ("date", "source", "title", "type", "is_supportive")):
+                continue
+            if str(item["date"]) > as_of:
+                continue
+            out.append({
+                "date": str(item["date"]),
+                "source": str(item["source"]),
+                "title": str(item["title"]),
+                "type": str(item["type"]),
+                "is_supportive": bool(item["is_supportive"]),
+                "url": str(item.get("url", "")),
+                "layer": "L3",
+            })
+        return out
+
+    def _fetch_http(self, as_of: str) -> FetchResult:
+        share_name, share_params = self._indicator_spec(
+            "NTM_IFIND_SHARE_FIELD", "NTM_IFIND_SHARE_PARAMS", SHARE_FIELD_TODO,
+        )
+        nav_name, nav_params = self._indicator_spec(
+            "NTM_IFIND_NAV_FIELD", "NTM_IFIND_NAV_PARAMS", NAV_FIELD_TODO,
+        )
+        client = self._http or IFindHttp()
+        end = date.fromisoformat(as_of)
+        begin = (end - timedelta(days=config.wind_kline_days())).isoformat()
+        try:
+            trade_days = [d for d in client.trade_dates(begin, as_of) if d <= as_of]
+            closes = client.history_close(INDEX_CODE, begin, as_of)
+        except LiveDataError:
+            raise
+        except Exception as exc:
+            raise LiveDataError(scrub(f"iFinD HTTP 取数异常：{type(exc).__name__}")) from None
+
+        market = _market_from_closes(closes, as_of)
+        history = self._load_history()
+        days: dict[str, Any] = history.setdefault("days", {})
+        needed = [d for d in trade_days[-self.backfill_days:] if d not in days]
+        if needed:
+            codes = [_ifind_code(code) for code in self.pool]
+            try:
+                grid = client.date_sequence(
+                    codes,
+                    [(share_name, share_params), (nav_name, nav_params)],
+                    needed,
+                )
+            except LiveDataError:
+                raise
+            except Exception as exc:
+                raise LiveDataError(scrub(f"iFinD HTTP 取数异常：{type(exc).__name__}")) from None
+            for day in needed:
+                snap = {}
+                for code, name in self.pool.items():
+                    row = grid.get(code, {}).get(day) or {}
+                    total = row.get(share_name)
+                    nav = row.get(nav_name)
+                    if total is None or total <= 0 or nav is None or nav <= 0:
+                        raise LiveDataError(
+                            f"iFinD {day} {code} 的份额或净值无效，已停止采集"
+                        )
+                    snap[code] = {
+                        "name": name,
+                        "total_share": total,
+                        "nav": nav,
+                    }
+                days[day] = snap
+
+        etf_rows = _etf_rows(days, as_of, self.pool)
+        latest = max((row["date"] for row in etf_rows), default="")
+        if latest:
+            market = [row for row in market if row["date"] <= latest]
+        dataset = {
+            "as_of": as_of,
+            "is_demo": False,
+            "source": SOURCE_NAME,
+            "data_latest_date": latest,
+            "market": market,
+            "etf": etf_rows,
+            "announcements": self._manual_announcements(as_of),
+            "holdings": [],
+        }
+        problems = validate_dataset(dataset, as_of)
+        if problems:
+            raise LiveDataError(
+                "iFinD 数据质量校验未通过（已丢弃本次采集，不入库、不降级）："
+                + "；".join(problems[:12])
+            )
+        self._save_history(history)
+        return FetchResult(
+            dataset=dataset,
+            source=SOURCE_NAME,
+            is_demo=False,
+            verified=True,
+            warnings=[
+                "真实数据已接入，但 L2 仍不可归因：无法识别 ETF 申购人身份",
+                "指数只用了文档确认的 close；历史行情文档没有确认成交额指标，amount 未请求",
+                "份额与净值指标来自环境变量，技能包未收录这两个代码",
+                "所有信号 is_confirmed 恒为 False，本系统不提供买卖建议",
+            ],
+        )
+
     def fetch(self, as_of: str | None = None) -> FetchResult:
         as_of = as_of or date.today().isoformat()
         try:
@@ -140,29 +276,69 @@ class IFindAdapter(BaseAdapter):
                 "NTM_DATA_VERIFIED=0：数据源核验清单未完成。已停止采集，不会降级到演示数据。"
             )
 
+        if http_credentials_configured():
+            try:
+                return self._fetch_http(as_of)
+            except LiveDataError as exc:
+                raise LiveDataError(scrub(str(exc))) from None
+
         username = _env("NTM_IFIND_USER")
         password = _env("NTM_IFIND_PASS")
-        token = _env("NTM_IFIND_REFRESH_TOKEN")
-        # 仅在没有 SDK 账号、只给了 refresh_token 时走 HTTP。解析尚未完成，明确失败。
-        if token and not (username and password):
-            self._require_requests()
-            raise LiveDataError(
-                "已检测到 iFinD refresh_token 方式，但 HTTP 响应解析尚未实现。"
-                "请改用 iFinDPy（设置 NTM_IFIND_USER 与 NTM_IFIND_PASS），"
-                "或按终端实际返回完善 adapters/ifind.py。"
-                "令牌不会写入日志或磁盘。"
-            )
-
         try:
             self._connect_sdk(username, password)
-            # 登录成功也不要假装取到了数：字段与返回结构必须按终端核对后再解析。
             raise LiveDataError(
-                "iFinD 适配器骨架已就绪。请在终端用超级命令确认"
-                "「场内流通份额」对应字段名，设置 NTM_IFIND_SHARE_FIELD，"
-                "并视需要调整 _fetch_kline_sdk / 份额解析逻辑。"
+                "iFinDPy 已连接，但 SDK 返回格式尚未按本仓库核对。"
+                "Linux 服务器请改用 NTM_IFIND_REFRESH_TOKEN 的 HTTP 通道。"
                 "完成前不会入库，也不会降级到演示数据。"
             )
         except LiveDataError:
             raise
         except Exception as exc:
             raise LiveDataError(f"iFinD 连接异常：{type(exc).__name__}") from None
+
+
+def _market_from_closes(closes: list[tuple[str, float]], as_of: str) -> list[dict[str, Any]]:
+    rows = [(day, close) for day, close in closes if day <= as_of and close > 0]
+    if len(rows) < 6:
+        raise LiveDataError("iFinD 指数有效交易日不足，无法计算 5 日涨跌幅")
+    out = []
+    for i, (day, close) in enumerate(rows):
+        prev = rows[i - 1][1] if i else close
+        base = rows[i - 5][1] if i >= 5 else rows[0][1]
+        out.append({
+            "date": day,
+            "index_close": close,
+            "index_change_pct": round((close / prev - 1) * 100, 4),
+            "index_change_5d_pct": round((close / base - 1) * 100, 4),
+            "amount_yi": None,
+        })
+    return out
+
+
+def _etf_rows(days: dict[str, Any], as_of: str, pool: dict[str, str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    ordered = [day for day in sorted(days) if day <= as_of]
+    for index, day in enumerate(ordered):
+        prev = days[ordered[index - 1]] if index else {}
+        for code, current in days[day].items():
+            if code not in pool:
+                continue
+            prev_share = (prev.get(code) or {}).get("total_share")
+            change = (current["total_share"] - prev_share) if prev_share else 0.0
+            nav = current["nav"]
+            rows.append({
+                "date": day,
+                "code": code,
+                "name": current.get("name") or pool[code],
+                "total_share": current["total_share"],
+                "share_change": change,
+                "nav": nav,
+                "est_net_yi": round(change * nav / 1e8, 4),
+                "amount_yi": 0.0,
+                "layer": "L2",
+                "attributable": False,
+                "source": SOURCE_NAME,
+            })
+    if not rows:
+        raise LiveDataError("iFinD 未得到任何 ETF 份额，已停止采集")
+    return rows

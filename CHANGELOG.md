@@ -17,7 +17,8 @@
 - `get_signals` 不含 `state_label`，日报输出前用既有状态枚举补上中文标签。
 - WindPy 读取人工维护的 `verified_announcements.json`；校验失败丢弃本次采集，不入库、不降级。
 - `wind_mcp` 与通用 HTTP 适配器仍必须设置 `NTM_ENABLE_LIVE_ADAPTERS`。个人终端适配器不使用这个开关。
-- iFinD 的 SDK 返回解析与 refresh_token HTTP 解析仍未完成，失败时明确报错。份额字段名未在本仓库用真实终端核对。
+- iFinD HTTP：用 refresh_token 换 access_token（只缓存在内存），按官方技能包调用 history_data / date_sequence / get_trade_dates。份额与净值指标代码文档未收录，未配置时失败停止。
+- Wind MCP 改为托管端点，密钥只读 `NTM_WIND_MCP_KEY`。份额字段改为已核对的 `f_unit_floortrading` 等；指数序列改用 `securities_get_trend`，参数定义不全时才搜索工具。
 
 ## [1.0.0] — 2026-11-10
 
