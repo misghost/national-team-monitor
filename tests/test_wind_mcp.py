@@ -16,6 +16,14 @@ DAYS = [(date.fromisoformat(AS_OF) - timedelta(days=i)).isoformat()
         for i in range(11, -1, -1)]  # 12 个交易日，升序
 
 
+def kline_markdown(days=DAYS, base=4000.0) -> str:
+    """get_index_kline 线上返回的 Markdown 表。数值与下面的列式 JSON 对齐。"""
+    lines = ["| 日期 | 收盘价 | 成交额（元） |", "|---|---|---|"]
+    for i, day in enumerate(days):
+        lines.append(f"| {day} | {base + i * 10} | {400000000000 + i * 1_000_000_000} |")
+    return "\n".join(lines)
+
+
 def kline_text(days=DAYS, base=4000.0) -> str:
     rows = []
     for i, d in enumerate(days):
@@ -74,7 +82,7 @@ class FakeClient:
         if tool_name in self.fail_on:
             raise LiveDataError("模拟 Wind 工具失败")
         if tool_name == "get_index_kline":
-            return kline_text()
+            return kline_markdown()
         if tool_name == "fund_get_size":
             return size_text(self.size_day_override or arguments["asOfDate"])
         if tool_name == "fund_get_listed_historical_price":
@@ -199,6 +207,82 @@ def size_text_unpublished(fallback: str) -> str:
     return "\n".join(lines)
 
 
+def test_stale_share_cache_does_not_truncate_index(tmp_path, monkeypatch):
+    """份额缓存停在 11-04 时，指数仍要保留到 as_of，不能把 11-05 之后裁掉。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    stale = "2026-11-04"
+    funds = {
+        code: {
+            "total_share": 1e10, "share_change": 1000.0, "nav": 1.2,
+            "amount_yi": 10.0, "est_net_yi": 0.01,
+        }
+        for code in POOL_CODES
+    }
+    path = tmp_path / "hist.json"
+    path.write_text(json.dumps({"version": 1, "days": {stale: funds}}), encoding="utf-8")
+
+    class Unpublished(FakeClient):
+        def call(self, tool_name, arguments):
+            if tool_name == "fund_get_size" and arguments["asOfDate"] > stale:
+                return size_text_unpublished(stale)
+            return super().call(tool_name, arguments)
+
+    result = wm.WindMCPAdapter(client=Unpublished(), history_path=path).fetch(AS_OF)
+    market_dates = [r["date"] for r in result.dataset["market"]]
+    assert market_dates[-1] == AS_OF
+    assert "2026-11-05" in market_dates
+    assert stale in market_dates
+    assert result.dataset["data_latest_date"] == stale
+    assert AS_OF not in {r["date"] for r in result.dataset["etf"]}
+
+
+def test_live_save_keeps_days_the_payload_omitted(tmp_path, monkeypatch):
+    """实盘库已有到 11-09 的记录时，一次只带到 11-04 的响应不能把这些天删掉。"""
+    from ntm import db
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "keep.db")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+
+    def market(day):
+        return {
+            "date": day, "index_close": 4000.0, "index_change_pct": -0.4,
+            "index_change_5d_pct": -1.2, "amount_yi": 9000.0,
+        }
+
+    def etf(day):
+        return {
+            "date": day, "code": "510300", "name": "沪深300ETF",
+            "total_share": 1e10, "share_change": 100.0, "nav": 1.2,
+            "est_net_yi": 0.01, "amount_yi": 30.0, "layer": "L2",
+            "source": "wind-mcp:test",
+        }
+
+    kept = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09"]
+    db.save_dataset({
+        "is_demo": False, "source": "wind",
+        "market": [market(d) for d in kept],
+        "etf": [etf(d) for d in kept],
+        "announcements": [], "holdings": [],
+    }, as_of="2026-11-09")
+    short = ["2026-07-13", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-10"]
+    db.save_dataset({
+        "is_demo": False, "source": "wind",
+        "market": [market(d) for d in short],
+        "etf": [etf(d) for d in short],
+        "announcements": [], "holdings": [],
+    }, as_of="2026-11-10")
+    with db.connect() as conn:
+        market_dates = [r[0] for r in conn.execute("SELECT date FROM market_daily ORDER BY date")]
+        etf_dates = [r[0] for r in conn.execute("SELECT DISTINCT date FROM etf_daily ORDER BY date")]
+        signal_dates = [r[0] for r in conn.execute("SELECT date FROM signals ORDER BY date")]
+    assert market_dates[-1] == "2026-11-10"
+    assert etf_dates[-1] == "2026-11-10"
+    assert signal_dates[-1] == "2026-11-10"
+    for day in ("2026-11-05", "2026-11-06", "2026-11-09"):
+        assert day in market_dates
+        assert day in etf_dates
+        assert day in signal_dates
+
+
 def test_unpublished_day_skipped_and_layers_aligned(tmp_path, monkeypatch):
     """T+1 份额未发布时跳过当日，且不得拿旧数据冒充、不得混算日期。"""
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
@@ -214,7 +298,8 @@ def test_unpublished_day_skipped_and_layers_aligned(tmp_path, monkeypatch):
     result = ad.fetch(AS_OF)
     assert result.dataset["data_latest_date"] == fallback
     assert AS_OF not in [r["date"] for r in result.dataset["etf"]]
-    assert all(r["date"] <= fallback for r in result.dataset["market"])
+    # 指数日可以晚于份额日，不能把已经取到的指数删掉
+    assert AS_OF in [r["date"] for r in result.dataset["market"]]
     assert all(r["date"] <= fallback for r in result.dataset["etf"])
     assert validate_dataset(result.dataset, AS_OF) == []
 
@@ -237,3 +322,162 @@ def test_wind_code_mapping():
     assert wm._wind_code("510300") == "510300.SH"
     assert wm._wind_code("159915") == "159915.SZ"
     assert wm._norm_code("588000.SH") == "588000"
+
+
+SAMPLE_SIZE_TABLE = """\
+## 查询结果
+
+### 数据结果
+| 序号 | 基金代码 | 基金简称 | 实际报告期 | 场内流通份额（份） | 当期场内流通份额变化（份） | 基金份额变动日期 | 上市基金规模(Wind计算)（元） |
+|---|---|---|---|---|---|---|---|
+| 1 | 510300.SH | 沪深300ETF华泰柏瑞 | 2026-09-30 | 46342387700 | -325800000 | 2026-11-10 | 191676749765.97 |
+| 2 | 510050.SH | 上证50ETF华夏 | 2026-09-30 | 16817166800 | 174600000 | 2026-11-10 | 48641973252.32 |
+"""
+
+
+def test_verified_fund_get_size_sample_units():
+    """附件 call_fund_get_size 的表：份额单位是份，规模单位是元。"""
+    rows = wm.parse_markdown_tables(SAMPLE_SIZE_TABLE)
+    assert len(rows) == 2
+    header, value = wm._find_cell(rows[0], "场内流通份额")
+    assert header == "场内流通份额（份）"
+    assert wm._num(value) == 46342387700
+    assert wm._share_multiplier(header) == 1
+    change_header, change = wm._find_cell(rows[0], "场内流通份额变化")
+    assert wm._num(change) == -325800000
+    assert "变化" in change_header
+    scale_header, scale = wm._find_cell(rows[0], "上市基金规模")
+    assert wm._num(scale) == pytest.approx(191676749765.97)
+    assert "元" in scale_header
+
+
+def test_share_header_wanfen_is_scaled():
+    assert wm._share_multiplier("基金份额（万份）") == 10_000
+    assert wm._yuan_to_yi("成交额（元）", 3.1e9) == pytest.approx(31)
+
+
+def test_sse_sample_decodes_utf8_markdown():
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {"content": [{"type": "text", "text": SAMPLE_SIZE_TABLE}], "isError": False},
+    }
+    raw = ("event: message\r\ndata: " + json.dumps(payload, ensure_ascii=False) + "\r\n\r\n").encode("utf-8")
+    decoded = wm.WindMCPClient._decode(raw)
+    text = decoded["result"]["content"][0]["text"]
+    assert "沪深300ETF华泰柏瑞" in text
+    assert wm.parse_markdown_tables(text)[0]["基金代码"] == "510300.SH"
+
+
+def test_call_tool_arguments_are_json_text(monkeypatch):
+    """tools/list 写明 market_call_tool.arguments 是 JSON 对象文本。"""
+    captured = {}
+
+    class Resp:
+        status_code = 200
+        content = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+        }).encode()
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["body"] = json
+        captured["headers"] = headers
+        return Resp()
+
+    monkeypatch.setattr(wm.requests, "post", fake_post)
+    client = wm.WindMCPClient("https://mcp.wind.com.cn/vserver_wind_tools/mcp/", "secret-key", 5, 0)
+    assert client.call("fund_get_size", {"windCodes": ["510300.SH"], "asOfDate": "2026-11-10"}) == "ok"
+    arguments = captured["body"]["params"]["arguments"]
+    assert captured["body"]["params"]["name"] == "market_call_tool"
+    assert arguments["toolName"] == "fund_get_size"
+    assert isinstance(arguments["arguments"], str)
+    assert json.loads(arguments["arguments"])["windCodes"] == ["510300.SH"]
+    assert captured["headers"]["Authorization"] == "Bearer secret-key"
+    assert "secret-key" not in client._public("failed secret-key")
+
+
+def test_batches_wind_codes(adapter):
+    adapter.code_batch = 2
+    adapter._fetch_day(adapter.client, AS_OF)
+    size_calls = [c for c in adapter.client.calls if c[0] == "fund_get_size"]
+    price_calls = [c for c in adapter.client.calls if c[0] == "fund_get_listed_historical_price"]
+    assert len(size_calls) == 4 and len(price_calls) == 4
+    assert all(len(c[1]["windCodes"]) <= 2 for c in size_calls)
+    assert size_calls[0][1]["includeFields"] == wm.SIZE_FIELDS
+    assert "f_etf_netasset" in wm.SIZE_FIELDS
+    assert "f_netasset_total2" not in wm.SIZE_FIELDS
+
+
+def test_get_index_kline_markdown_is_the_live_path(adapter):
+    market = adapter._fetch_kline(adapter.client, AS_OF)
+    assert adapter.client.calls[0][0] == "get_index_kline"
+    args = adapter.client.calls[0][1]
+    assert args["windcode"] == "000300.SH"
+    assert args["begin_date"] <= AS_OF <= args["end_date"]
+    assert args["end_date"] == AS_OF
+    assert args["period"] == "1d"
+    assert market[-1]["index_close"] == 4000 + (len(DAYS) - 1) * 10
+    assert market[-1]["amount_yi"] > 0
+
+
+def test_index_fetch_does_not_search_even_if_available(adapter):
+    class SearchClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.searches = []
+
+        def search_tools(self, question, top_k=3):
+            self.searches.append(question)
+            return []
+
+    client = SearchClient()
+    adapter.client = client
+    adapter._fetch_kline(client, AS_OF)
+    assert client.searches == []
+    assert client.calls[0][0] == "get_index_kline"
+
+
+def test_securities_get_trend_json_dates_and_series():
+    payload = {
+        "dates": DAYS,
+        "series": {
+            "close": [4000 + i * 10 for i in range(len(DAYS))],
+            "amount": [400000000000 + i * 1_000_000_000 for i in range(len(DAYS))],
+        },
+    }
+    points = wm._kline_points(json.dumps(payload), AS_OF)
+    assert [p["date"] for p in points] == list(DAYS)
+    assert points[1]["_close"] == 4010
+    assert points[-1]["_amount"] == 400000000000 + (len(DAYS) - 1) * 1_000_000_000
+    # 包在 data 里、以及命名序列，同样认
+    wrapped = {"data": {"dates": DAYS[:6], "series": [
+        {"name": "close", "values": [4000 + i * 10 for i in range(6)]},
+    ]}}
+    assert len(wm._kline_points(json.dumps(wrapped), AS_OF)) == 6
+    with pytest.raises(LiveDataError, match="长度不一致"):
+        wm._kline_points(json.dumps({"dates": DAYS, "series": {"close": [1, 2]}}), AS_OF)
+
+
+def test_unrecognized_index_json_is_not_called_a_markdown_miss():
+    with pytest.raises(LiveDataError, match="dates/series") as exc:
+        wm._kline_points('{"foo": 1}', AS_OF)
+    assert "Markdown" not in str(exc.value)
+
+
+def test_live_client_key_fallback(monkeypatch):
+    monkeypatch.delenv("NTM_WIND_MCP_KEY", raising=False)
+    monkeypatch.delenv("NTM_DATA_API_KEY", raising=False)
+    monkeypatch.delenv("NTM_DATA_ENDPOINT", raising=False)
+    monkeypatch.setenv("NTM_DATA_VERIFIED", "1")
+    with pytest.raises(LiveDataError, match="NTM_WIND_MCP_KEY"):
+        wm.WindMCPAdapter()._build_client()
+    monkeypatch.setenv("NTM_DATA_API_KEY", "fallback-key")
+    monkeypatch.setenv("NTM_DATA_ENDPOINT", "https://mcp.example/mcp/")
+    client = wm.WindMCPAdapter()._build_client()
+    assert client.key == "fallback-key"
+    assert client.endpoint == "https://mcp.example/mcp/"
+    monkeypatch.setenv("NTM_WIND_MCP_KEY", "canonical-key")
+    assert wm.WindMCPAdapter()._build_client().key == "canonical-key"

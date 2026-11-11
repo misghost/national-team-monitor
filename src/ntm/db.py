@@ -134,9 +134,69 @@ def get_meta(key: str, default: str = "") -> str:
     return row["value"] if row else default
 
 
-def save_dataset(dataset: dict[str, Any]) -> None:
-    """原子性替换全量演示/采集数据集，然后重算信号。"""
+def _union_live_history(dataset: dict[str, Any], as_of: str) -> None:
+    """实盘刷新只增不删：新数据覆盖同一天，库里已有且不晚于 as_of 的日期必须留下。
+
+    适配器若少返回几天，全量替换会把指数和信号裁短。这里在删除之前把缺口补回。
+    上一份数据若仍是演示，不并入，避免合成行情混进实盘。
+    """
+    if dataset.get("is_demo", True):
+        return
+    if get_meta("dataset_is_demo", "1") != "0":
+        return
     init_db()
+    with connect() as conn:
+        old_market = conn.execute(
+            "SELECT date,index_close,index_change_pct,index_change_5d_pct,"
+            "amount_yi,margin_balance_yi FROM market_daily WHERE date<=?",
+            (as_of,),
+        ).fetchall()
+        old_etf = conn.execute(
+            "SELECT date,code,name,total_share,share_change,nav,est_net_yi,"
+            "amount_yi,layer,source FROM etf_daily WHERE date<=?",
+            (as_of,),
+        ).fetchall()
+    old_max = max((r["date"] for r in old_market), default="")
+    market = {r["date"]: r for r in dataset.get("market") or [] if r["date"] <= as_of}
+    for r in old_market:
+        market.setdefault(r["date"], {
+            "date": r["date"],
+            "index_close": r["index_close"],
+            "index_change_pct": r["index_change_pct"],
+            "index_change_5d_pct": r["index_change_5d_pct"],
+            "amount_yi": r["amount_yi"],
+            "margin_balance_yi": r["margin_balance_yi"],
+        })
+    dataset["market"] = [market[d] for d in sorted(market)]
+    etf = {
+        (r["date"], r["code"]): r
+        for r in dataset.get("etf") or []
+        if r["date"] <= as_of
+    }
+    for r in old_etf:
+        etf.setdefault((r["date"], r["code"]), {
+            "date": r["date"], "code": r["code"], "name": r["name"],
+            "total_share": r["total_share"], "share_change": r["share_change"],
+            "nav": r["nav"], "est_net_yi": r["est_net_yi"],
+            "amount_yi": r["amount_yi"], "layer": r["layer"] or "L2",
+            "source": r["source"],
+        })
+    dataset["etf"] = [etf[k] for k in sorted(etf)]
+    new_max = max((r["date"] for r in dataset["market"]), default="")
+    if old_max and new_max < old_max:
+        raise RuntimeError(
+            f"刷新后的指数历史截止 {new_max or '空'}，早于库内 {old_max}，已拒绝入库"
+        )
+
+
+def save_dataset(dataset: dict[str, Any], as_of: str | None = None) -> None:
+    """原子性替换全量演示/采集数据集，然后重算信号。
+
+    实盘数据会先与库内不晚于 as_of 的历史取并集，避免一次短响应把库裁短。
+    """
+    init_db()
+    if as_of:
+        _union_live_history(dataset, as_of)
     with connect() as conn:
         conn.execute("DELETE FROM etf_daily")
         conn.execute("DELETE FROM announcements")
@@ -313,6 +373,7 @@ def get_etf_momentum(day: str | None = None) -> dict:
         ))
 
     summary = momentum.summarize(day, out_rows, threshold)
+    report = momentum.anomaly_report(out_rows, threshold)
     return {
         "date": day,
         "is_demo": get_meta("dataset_is_demo", "1") == "1",
@@ -321,6 +382,8 @@ def get_etf_momentum(day: str | None = None) -> dict:
         "items": [r.as_dict() for r in out_rows],
         "summary": summary.as_dict(),
         "caveat": momentum.MOMENTUM_CAVEAT,
+        "anomalies": report["lines"],
+        "volume_alert": report["alert"],
     }
 
 

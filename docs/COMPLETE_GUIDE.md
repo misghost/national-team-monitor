@@ -10,7 +10,7 @@
 | 版本 | `1.0.0` |
 | 语言 / 运行时 | Python ≥ 3.10（开发验证于 3.11） |
 | 许可证 | MIT |
-| 测试 | **95 项 pytest 全绿** + `ntm check` 不变式自检 |
+| 测试 | **132 项 pytest 全绿** + `ntm check` 不变式自检 |
 | 默认数据 | 合成演示数据（固定种子 `20261109`），全程标注 `is_demo` |
 | 定位 | 研究 / 监控 / 复盘工具，**不构成投资建议** |
 
@@ -212,7 +212,7 @@ national-team-monitor/
 │   │   ├── live.py          通用 HTTP 适配器（配置驱动，失败即停）
 │   │   └── wind_mcp.py      Wind MCP 真实数据适配器（已实测核验）
 │   └── static/index.html    单页看板（ECharts CDN，无需构建）
-├── tests/                   95 项 pytest
+├── tests/                   132 项 pytest
 ├── docs/                    本文档 + 方法论 / 数据字典 / 参考策略 / 修订提示词
 ├── deploy/                  nginx.conf、ntm.service、crontab.example、deploy.sh、
 │                            verified_announcements.example.json、README.md
@@ -234,7 +234,7 @@ national-team-monitor/
 | 调度 | 标准库线程 或 系统 cron | 不引入 APScheduler/Celery；**生产推荐 cron 调 HTTP API** |
 | 前端 | 单页 HTML + ECharts CDN | 无构建链，静态目录直接 serve |
 | 指标计算 | 标准库纯函数 | 逻辑简单、可单测，无需 Pandas |
-| 测试 | pytest + FastAPI TestClient | 95 项，含契约与不变式 |
+| 测试 | pytest + FastAPI TestClient | 132 项，含契约与不变式 |
 
 ---
 
@@ -260,7 +260,7 @@ ntm serve          # 等价于 python -m ntm serve
 ### 4.2 验证真的跑通
 
 ```bash
-python3 -m pytest -q                 # 95 项测试
+python3 -m pytest -q                 # 132 项测试
 PYTHONPATH=src python3 -m ntm check # 不变式自检
 curl http://localhost:8000/api/health
 curl http://localhost:8000/api/datasource
@@ -335,7 +335,7 @@ curl http://localhost:8000/api/datasource
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `NTM_ENABLE_LIVE_ADAPTERS` | `0` | 总开关，必须与 `NTM_DEMO_MODE=0` 同时设置 |
-| `NTM_DATA_SOURCE` | 空 | 空 = 通用 HTTP 适配器；`wind_mcp` = Wind MCP 适配器 |
+| `NTM_DATA_SOURCE` | 空 | 空 = 通用 HTTP 适配器；`wind_mcp` = Wind MCP；`windpy` / `ifind` = 个人终端（见 PERSONAL_USAGE.md） |
 | `NTM_DATA_ENDPOINT` | 空 | 数据源 HTTPS 端点 |
 | `NTM_DATA_API_KEY` | 空 | 凭据（**仅环境变量**） |
 | `NTM_DATA_VERIFIED` | `0` | 是否已完成核验清单并留档 |
@@ -422,6 +422,8 @@ curl http://localhost:8000/api/datasource
 |---|---|---|
 | `src/ntm/adapters/wind_mcp.py` | `NTM_DATA_SOURCE=wind_mcp` | 已实现并实测核验（L2 份额日频） |
 | `src/ntm/adapters/live.py` | 留空 | 通用 HTTP/JSON 端点，配置驱动，由接入方按契约提供 |
+| `src/ntm/adapters/windpy.py` | `NTM_DATA_SOURCE=windpy` | 本机 WindPy。字段名需超级命令确认。见 [`PERSONAL_USAGE.md`](../PERSONAL_USAGE.md) |
+| `src/ntm/adapters/ifind.py` | `NTM_DATA_SOURCE=ifind` | iFinD 骨架。SDK / HTTP 解析未完成时失败即停 |
 
 ### 7.3 Wind MCP 字段映射
 
@@ -589,7 +591,7 @@ nginx -t && systemctl reload nginx
 
 ## 10. 测试与质量保障
 
-**95 项 pytest**，覆盖：
+**132 项 pytest**，覆盖：
 
 - 实体别名收敛（证金）、中投排除、名单进出不可判定、送转股复权、PIT 前视检测；
 - 三重共振四种状态、`is_confirmed` 恒假、置信度上限、演示数据可复现；

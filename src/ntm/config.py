@@ -63,9 +63,32 @@ DATA_TIMEOUT = int(os.getenv("NTM_DATA_TIMEOUT", "10"))
 DATA_MIN_INTERVAL = float(os.getenv("NTM_DATA_MIN_INTERVAL", "1.0"))
 
 
-# ---- Wind MCP 适配器（data_source=wind_mcp 时生效）----
+# 2026-11-10 实测的 Wind 托管 MCP（stateless streamable HTTP）。
+WIND_MCP_ENDPOINT = "https://mcp.wind.com.cn/vserver_wind_tools/mcp/"
+
+
+def wind_mcp_key() -> str:
+    """规范名是 NTM_WIND_MCP_KEY。旧部署若只设了 NTM_DATA_API_KEY，仍可用。"""
+    return os.getenv("NTM_WIND_MCP_KEY", "").strip() or os.getenv("NTM_DATA_API_KEY", "").strip()
+
+
+def wind_mcp_endpoint() -> str:
+    """规范端点是托管 MCP。旧部署的 NTM_DATA_ENDPOINT 仅在显式设置时覆盖。"""
+    return (
+        os.getenv("NTM_WIND_MCP_ENDPOINT", "").strip()
+        or os.getenv("NTM_DATA_ENDPOINT", "").strip()
+        or WIND_MCP_ENDPOINT
+    )
+
+
+# ---- 数据源选择 ----
 def data_source() -> str:
-    """真实数据源类型；空字符串表示未选择（使用通用 HTTP 适配器）。"""
+    """真实数据源类型。
+
+    空字符串表示未选择（使用通用 HTTP 适配器，需 NTM_ENABLE_LIVE_ADAPTERS）。
+    ``wind_mcp`` / ``windpy`` / ``ifind`` 由工厂按本返回值直接选择。
+    WindPy / iFinDPy 仅在取数时懒加载。
+    """
     return os.getenv("NTM_DATA_SOURCE", "").strip().lower()
 
 
