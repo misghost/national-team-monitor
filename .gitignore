@@ -11,7 +11,9 @@ __pycache__/
 htmlcov/
 
 # 运行期数据（演示库可随时重建）
-data/
+# 例外：人工确权的事件清单属研究对象本身，需版本化以便复现
+data/*
+!data/verified_policy_events.json
 *.db
 *.db-shm
 *.db-wal

@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import alert, backtest, config, db, datasource, layers
+from . import event_study as es_mod
+from . import events as ev_mod
 from .adapters import get_adapter
 from .entities import as_dict as entities_as_dict
 from .etf_pool import POOL_CAVEAT, claims_as_dict, pool_as_dict, validate_pool
@@ -195,6 +197,36 @@ def methodology() -> dict:
 @app.get("/api/backtest")
 def backtest_api(horizon: int = Query(20, ge=1, le=120)) -> dict:
     return backtest.run_backtest(horizon).as_dict()
+
+
+@app.get("/api/event-study")
+def event_study_api(
+    horizons: str = Query("5,20,60,120"),
+    split_date: str | None = Query(None),
+    n_perm: int = Query(2000, ge=100, le=50000),
+) -> dict:
+    """可证伪检验：稳市事件后前瞻收益是否显著区别于非事件日基准。
+
+    依赖真实指数序列与人工确权事件清单；任一缺失都返回明确状态，
+    不合成事件、不用演示数据冒充真实结论。
+    """
+    csv_path = config.DATA_DIR / "index_000300_sh_daily.csv"
+    try:
+        series = es_mod.load_index_series(csv_path, label="000300.SH 沪深300")
+    except (FileNotFoundError, ValueError) as exc:
+        return {
+            "status": "INDEX_DATA_UNAVAILABLE",
+            "message": f"真实指数序列不可用：{exc}",
+            "hint": "先运行 scripts/fetch_public_index.py 生成指数日线",
+            "is_confirmed": False,
+        }
+    events = ev_mod.load_events()
+    try:
+        hs = tuple(int(x.strip()) for x in horizons.split(",") if x.strip())
+    except ValueError:
+        return {"status": "INVALID_HORIZONS", "message": "horizons 需为逗号分隔的整数"}
+    cfg = es_mod.EventStudyConfig(horizons=hs or (5, 20, 60), n_perm=n_perm, split_date=split_date)
+    return es_mod.run_event_study(series, events, cfg)
 
 
 @app.get("/api/alerts")

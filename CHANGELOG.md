@@ -4,8 +4,28 @@
 
 ## [Unreleased]
 
+### 修复
+
+- 定稿勘误：`event_study.py` CAVEATS 中一条曾引用已整体撤回的 7 事件子集 MAE 检验数字
+  （p=0.902/0.811/0.942），已在源头改为分维度定稿表述（幅度维度无一致方向差异；
+  频率维度 Fisher 精确检验四窗口双侧 p 全部不显著，属描述性信号）。
+- 主结果文件补齐 T+250：`event_study_result.json` 定稿为 5 窗口版
+  （horizons=[5,20,60,120,250]，Bonferroni 5 次检验、any_significant=false），
+  T+5~T+120 与 4 窗口版逐位一致（固定种子确定性复现）。
+
 ### 新增
 
+- **可证伪检验层**：`statistics.py`（置换检验 / Bootstrap / Bonferroni / 滞后相关扫描）、
+  `event_study.py`（多 horizon 事件研究、非事件日对照组、样本内外切分、稳健性网格）、
+  `events.py`（人工确权事件清单，绝不自动生成）；新增 `GET /api/event-study`、
+  `scripts/fetch_public_index.py`、`scripts/run_event_study.py` 与对应单元测试。
+  命题由「证明相关性」改为「事件组前瞻收益是否显著区别于非事件日基准」。
+- **真实行情底座**：东方财富公开不复权日 K（沪深300，2015-01-05 至 2026-11-11，
+  2880 个交易日）。该接口**不提供 ETF 总份额**，L2 缺口仍需 Wind MCP
+  （`NTM_WIND_MCP_KEY`）接入；演示数据只用于验证代码正确性，不用于统计结论。
+- 方法论新增第十一节「数据可得性断点」（北向日频净买入 2024-08-19 起不可得、
+  ETF 前十大持有人 2026-05-01 起不再强制披露）与第十二节「可证伪检验层」，
+  明确 t=0 为意图公开日、同日事件簇合并、不报同期相关系数作为结论。
 - 个人节奏观察：`personal.py`、`scripts/daily_personal.py`、[`PERSONAL_USAGE.md`](PERSONAL_USAGE.md)。
   分数综合指数跌幅、核心宽基净申购与人工核验公告，上限 85，不输出买卖指令。
 - 适配器 `windpy`（本机 Wind 终端）与 `ifind`（同花顺 iFinD）。
