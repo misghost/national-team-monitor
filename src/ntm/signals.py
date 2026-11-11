@@ -55,10 +55,47 @@ class Thresholds:
     official_lookback_days: int = config.OFFICIAL_LOOKBACK_DAYS
 
 
-def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
-    """返回符合 API 契约的 signal dict。"""
-    th = th or Thresholds()
+def _gap_down(value: float, threshold: float) -> float:
+    """还要再跌多少才到阈值。已经低于或等于阈值时为 0。"""
+    return round(max(0.0, float(value) - float(threshold)), 4)
 
+
+def _gap_up(value: float, threshold: float) -> float:
+    """还要再增加多少才到阈值。已经达到时为 0。"""
+    return round(max(0.0, float(threshold) - float(value)), 4)
+
+
+def _progress_down(value: float, threshold: float) -> float:
+    if value <= threshold:
+        return 1.0
+    if value >= 0 or threshold >= 0:
+        return 0.0
+    return round(max(0.0, min(1.0, float(value) / float(threshold))), 4)
+
+
+def _progress_up(value: float, threshold: float) -> float:
+    if value >= threshold:
+        return 1.0
+    if threshold <= 0:
+        return 0.0
+    return round(max(0.0, min(1.0, float(value) / float(threshold))), 4)
+
+
+def _metric(key: str, label: str, value: float, threshold: float, gap: float, unit: str, progress: float) -> dict:
+    return {
+        "key": key,
+        "label": label,
+        "value": round(float(value), 4),
+        "threshold": round(float(threshold), 4),
+        "gap": round(float(gap), 4),
+        "unit": unit,
+        "progress": round(float(progress), 4),
+    }
+
+
+def build_conditions(inp: SignalInput, th: Thresholds | None = None) -> dict:
+    """三个条件的是否满足，以及距阈值还差多少。不改变判定本身。"""
+    th = th or Thresholds()
     market_met = (
         inp.index_change_pct <= th.market_drop_1d_pct
         or inp.index_change_5d_pct <= th.market_drop_5d_pct
@@ -67,9 +104,9 @@ def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
         inp.sync_etf_count >= th.etf_sync_min
         and inp.net_subscription_yi >= th.etf_net_min_yi
     )
-    official_met = inp.supportive_announcements > 0
-
-    conditions = {
+    official_need = 1
+    official_met = inp.supportive_announcements >= official_need
+    return {
         "market_drop": {
             "met": market_met,
             "label": "市场大跌 / 连续下跌",
@@ -77,6 +114,18 @@ def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
                 f"当日 {inp.index_change_pct:+.2f}%，近 5 日 {inp.index_change_5d_pct:+.2f}%"
                 f"（阈值：单日 ≤{th.market_drop_1d_pct}% 或 5 日 ≤{th.market_drop_5d_pct}%）"
             ),
+            "metrics": [
+                _metric(
+                    "index_1d", "当日", inp.index_change_pct, th.market_drop_1d_pct,
+                    _gap_down(inp.index_change_pct, th.market_drop_1d_pct), "pct",
+                    _progress_down(inp.index_change_pct, th.market_drop_1d_pct),
+                ),
+                _metric(
+                    "index_5d", "近5日", inp.index_change_5d_pct, th.market_drop_5d_pct,
+                    _gap_down(inp.index_change_5d_pct, th.market_drop_5d_pct), "pct",
+                    _progress_down(inp.index_change_5d_pct, th.market_drop_5d_pct),
+                ),
+            ],
         },
         "etf_sync": {
             "met": etf_met,
@@ -86,6 +135,18 @@ def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
                 f"（阈值：≥{th.etf_sync_min} 只且 ≥{th.etf_net_min_yi:,.0f} 亿元）；"
                 "数据来自 ETF 总份额，非成交额"
             ),
+            "metrics": [
+                _metric(
+                    "sync_count", "同步只数", inp.sync_etf_count, th.etf_sync_min,
+                    _gap_up(inp.sync_etf_count, th.etf_sync_min), "count",
+                    _progress_up(inp.sync_etf_count, th.etf_sync_min),
+                ),
+                _metric(
+                    "net_yi", "合计净申购", inp.net_subscription_yi, th.etf_net_min_yi,
+                    _gap_up(inp.net_subscription_yi, th.etf_net_min_yi), "yi",
+                    _progress_up(inp.net_subscription_yi, th.etf_net_min_yi),
+                ),
+            ],
         },
         "official": {
             "met": official_met,
@@ -93,8 +154,25 @@ def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
             "detail": (
                 f"近 {th.official_lookback_days} 日 {inp.supportive_announcements} 条增持/稳市类公告"
             ),
+            "metrics": [
+                _metric(
+                    "supportive", f"近{th.official_lookback_days}日",
+                    inp.supportive_announcements, official_need,
+                    _gap_up(inp.supportive_announcements, official_need), "count",
+                    _progress_up(inp.supportive_announcements, official_need),
+                ),
+            ],
         },
     }
+
+
+def evaluate(inp: SignalInput, th: Thresholds | None = None) -> dict:
+    """返回符合 API 契约的 signal dict。"""
+    th = th or Thresholds()
+    conditions = build_conditions(inp, th)
+    market_met = conditions["market_drop"]["met"]
+    etf_met = conditions["etf_sync"]["met"]
+    official_met = conditions["official"]["met"]
 
     met_all = market_met and etf_met and official_met
     if met_all:

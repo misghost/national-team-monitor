@@ -7,10 +7,21 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class Metric(BaseModel):
+    key: str
+    label: str
+    value: float
+    threshold: float
+    gap: float
+    unit: str
+    progress: float = 0
+
+
 class Condition(BaseModel):
     met: bool
     label: str
     detail: str
+    metrics: list[Metric] = Field(default_factory=list)
 
 
 class Signal(BaseModel):

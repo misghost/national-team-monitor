@@ -1,0 +1,20 @@
+[
+  {
+    "name": "示例：急跌后的宽基申购",
+    "start": "2024-01-22",
+    "end": "2024-02-08",
+    "peak_daily_net_yi": 800,
+    "cum_net_yi": 2400,
+    "max_drawdown_pct": -8.5,
+    "note": "示例数值，不是真实历史。复制到 data/history_reference.json 后自行替换。"
+  },
+  {
+    "name": "示例：另一段市场波动",
+    "start": "2022-03-08",
+    "end": "2022-04-27",
+    "peak_daily_net_yi": 450,
+    "cum_net_yi": 1600,
+    "max_drawdown_pct": -12.0,
+    "note": "示例数值，不是真实历史。"
+  }
+]

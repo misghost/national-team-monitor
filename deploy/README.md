@@ -68,6 +68,15 @@ sudo systemctl daemon-reload && sudo systemctl enable --now ntm
 
 **crontab**（只跑定时刷新、不常驻服务）：见 `deploy/crontab.example`。
 
+历史对照是可选的。把 `deploy/history_reference.example.json` 复制为
+`data/history_reference.json` 并换成自己的回测结果后，首页才会出现对照条。
+示例里的数字不是真实历史。文件不存在时接口返回空列表，页面不显示这一块。
+
+宽基走势的成交额折线也是可选的。把公开行情放到 `data/etf_kline.json`
+（服务器上是 `/opt/national-team-monitor/data/etf_kline.json`，格式见
+`deploy/etf_kline.example.json`）。示例只有结构，不是完整行情，不要当成历史。
+没有这个文件时，走势图只画库里已有的官方净申购和成交额。净申购不会用成交额填。
+
 ## 已知边界
 
 - 默认演示数据是合成数据，**不可用于实盘决策**；

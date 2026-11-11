@@ -64,6 +64,34 @@ def test_single_etf_spike_does_not_count():
     assert r["state"] != POLICY_BOTTOM_PROBABLE
 
 
+def test_trigger_distance_matches_thresholds():
+    """未触发时给出还差多少；已触发的那一项 gap 为 0。判定结果不变。"""
+    r = evaluate(SignalInput(
+        "2026-11-10", 0.07, 1.25, 2, -31.2, 0,
+    ), TH)
+    assert r["state"] == NO_SIGNAL
+    market = {m["key"]: m for m in r["conditions"]["market_drop"]["metrics"]}
+    assert market["index_1d"]["value"] == 0.07
+    assert market["index_1d"]["threshold"] == TH.market_drop_1d_pct
+    assert market["index_1d"]["gap"] == 1.57
+    assert market["index_5d"]["gap"] == 5.25
+    assert market["index_1d"]["unit"] == "pct"
+    etf = {m["key"]: m for m in r["conditions"]["etf_sync"]["metrics"]}
+    assert etf["sync_count"]["value"] == 2
+    assert etf["sync_count"]["threshold"] == 3
+    assert etf["sync_count"]["gap"] == 1
+    assert etf["net_yi"]["value"] == -31.2
+    assert etf["net_yi"]["threshold"] == 200
+    assert etf["net_yi"]["gap"] == 231.2
+    official = r["conditions"]["official"]["metrics"][0]
+    assert official["value"] == 0
+    assert official["threshold"] == 1
+    assert official["gap"] == 1
+    assert "5" in official["label"]
+    met = evaluate(_inp(), TH)
+    assert all(m["gap"] == 0 for c in met["conditions"].values() for m in c["metrics"] if c["met"])
+
+
 def test_5d_drop_alone_satisfies_market_condition():
     r = evaluate(_inp(index_change_pct=-0.2, index_change_5d_pct=-5.5), TH)
     assert r["conditions"]["market_drop"]["met"] is True
