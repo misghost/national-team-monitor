@@ -38,7 +38,7 @@ PYTHONPATH=src python3 -m ntm serve
 
 ```bash
 PYTHONPATH=src python3 -m ntm check     # 自检：实体去重/PIT/信号铁律
-python3 -m pytest -q                    # 127 项测试
+python3 -m pytest -q                    # 128 项测试
 curl http://localhost:8000/api/health
 ```
 
