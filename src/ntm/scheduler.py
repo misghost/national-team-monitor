@@ -26,7 +26,8 @@ def refresh_once(as_of: str | None = None) -> dict:
     adapter = get_adapter()
     result = adapter.fetch(day)
     # 真实适配器失败会在此处抛错，不会走到入库，也不会降级到演示数据。
-    db.save_dataset(result.dataset)
+    # as_of 传给入库，实盘历史只增不删。
+    db.save_dataset(result.dataset, as_of=day)
     db.set_meta("dataset_as_of", day)
     db.set_meta("dataset_source", result.source)
     db.set_meta("dataset_is_demo", "1" if result.is_demo else "0")
@@ -36,6 +37,12 @@ def refresh_once(as_of: str | None = None) -> dict:
     db.set_meta("dataset_verified", "1" if (not result.is_demo and result.verified) else "0")
     signal = db.get_latest_signal()
     alerts = dispatch(signal) if signal else []
+    from .alert import dispatch_volume
+
+    momentum = db.get_etf_momentum(day)
+    volume_alerts: list = []
+    if momentum.get("volume_alert"):
+        volume_alerts = dispatch_volume(str(momentum.get("date") or day), momentum.get("anomalies") or [])
     return {
         "as_of": day,
         "source": result.source,
@@ -46,6 +53,7 @@ def refresh_once(as_of: str | None = None) -> dict:
         "signals": len(db.get_signals(days=10000)),
         "signal_state": signal["state"] if signal else None,
         "alerts": alerts,
+        "volume_alerts": volume_alerts,
     }
 
 

@@ -28,11 +28,35 @@ def _message(signal: dict) -> str:
     )
 
 
+def volume_message(day: str, lines: list[str]) -> str:
+    """放量推送。只陈述成交额和份额变化，不写成托底或买卖信号。"""
+    facts = [line for line in lines if not line.startswith("没有 ETF")]
+    body = "\n".join(facts)
+    return f"【成交额放量】{day}\n{body}\n成交额是二级市场换手，不等于份额增加。"
+
+
+def dispatch_volume(day: str, lines: list[str]) -> list[dict]:
+    """放量倍数达到阈值时走现有渠道。与托底信号分开计数，但仍受每日上限约束。"""
+    facts = [line for line in lines if not line.startswith("没有 ETF")]
+    if not facts:
+        return [{"channel": "none", "status": "skipped", "reason": "无放量"}]
+    state = "VOLUME_SPIKE"
+    if db.count_alerts_on(day) >= config.ALERT_MAX_PER_DAY:
+        return [{"channel": "none", "status": "skipped", "reason": "已达每日推送上限"}]
+    with db.connect() as conn:
+        sent = conn.execute(
+            "SELECT 1 FROM alerts WHERE date=? AND state=? AND status='sent' LIMIT 1",
+            (day, state),
+        ).fetchone()
+    if sent:
+        return [{"channel": "none", "status": "skipped", "reason": "同日放量已推送"}]
+    return _deliver(day, state, volume_message(day, facts), f"[NTM] 成交额放量 {day}")
+
+
 def dispatch(signal: dict, force: bool = False) -> list[dict]:
     """返回各渠道投递结果。未配置渠道标记为 skipped（不视为失败）。"""
     day = signal["date"]
     state = signal["state"]
-    results: list[dict] = []
 
     # 只对政策底信号推送，避免噪声轰炸
     if state != POLICY_BOTTOM_PROBABLE and not force:
@@ -50,13 +74,14 @@ def dispatch(signal: dict, force: bool = False) -> list[dict]:
         if last and last["state"] == state:
             return [{"channel": "none", "status": "skipped", "reason": "同状态同日已推送"}]
 
-    text = _message(signal)
+    return _deliver(day, state, _message(signal), f"[NTM] 托底信号 {day}（推断非实锤）")
 
-    # 站内（始终记录）
+
+def _deliver(day: str, state: str, text: str, subject: str) -> list[dict]:
+    results: list[dict] = []
     db.insert_alert(day, state, "inbox", "sent")
     results.append({"channel": "inbox", "status": "sent"})
 
-    # 企业微信。requests 只在确实要推送时导入，避免演示模式被可选依赖拖垮。
     if config.WECHAT_WEBHOOK:
         status = "failed"
         reason = None
@@ -82,12 +107,11 @@ def dispatch(signal: dict, force: bool = False) -> list[dict]:
     else:
         results.append({"channel": "wecom", "status": "skipped", "reason": "未配置 webhook"})
 
-    # 邮件
     if config.SMTP_HOST and config.SMTP_TO:
         try:
             msg = EmailMessage()
             msg.set_content(text)
-            msg["Subject"] = f"[NTM] 托底信号 {day}（推断非实锤）"
+            msg["Subject"] = subject
             msg["From"] = config.SMTP_TO
             msg["To"] = config.SMTP_TO
             with smtplib.SMTP(config.SMTP_HOST, timeout=8) as s:
@@ -99,7 +123,6 @@ def dispatch(signal: dict, force: bool = False) -> list[dict]:
         results.append({"channel": "email", "status": status})
     else:
         results.append({"channel": "email", "status": "skipped", "reason": "未配置 SMTP"})
-
     return results
 
 

@@ -758,13 +758,13 @@ class WindMCPAdapter(BaseAdapter):
                     days.setdefault(actual, {}).update(funds)
         self._save_history(history)
 
-        # 各层日期对齐：市场行情取到份额最新日为止，避免「今天盘中指数 + 昨天份额」
-        # 混算信号。ETF 份额为 T+1，全站以最新完整交易日为口径。
-        latest = max(days) if days else ""
-        if latest:
-            market = [r for r in market if r["date"] <= latest]
+        # 指数序列按 as_of 截断即可。不能再按「份额缓存里最晚的一天」把指数裁短：
+        # 缓存若停在更早的交易日，已经取到的 11-05 之后的指数会被删掉，
+        # save_dataset 全量替换后，库和信号一起倒退。份额还没发布的日期可以没有 ETF 行。
+        market = [r for r in market if str(r["date"]) <= as_of]
+        market.sort(key=lambda r: str(r["date"]))
         if not market:
-            raise LiveDataError("行情序列与份额数据日期无交集，已停止采集")
+            raise LiveDataError("指数序列在 as_of 之前为空，已停止采集")
 
         etf: list[dict[str, Any]] = []
         for day in sorted(days):
@@ -785,6 +785,7 @@ class WindMCPAdapter(BaseAdapter):
                 })
         if not etf:
             raise LiveDataError("Wind MCP 未取到任何 ETF 份额数据，已停止采集")
+        latest = max(r["date"] for r in etf)
 
         dataset: dict[str, Any] = {
             "market": market,

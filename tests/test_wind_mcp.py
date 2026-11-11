@@ -207,6 +207,82 @@ def size_text_unpublished(fallback: str) -> str:
     return "\n".join(lines)
 
 
+def test_stale_share_cache_does_not_truncate_index(tmp_path, monkeypatch):
+    """份额缓存停在 11-04 时，指数仍要保留到 as_of，不能把 11-05 之后裁掉。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    stale = "2026-11-04"
+    funds = {
+        code: {
+            "total_share": 1e10, "share_change": 1000.0, "nav": 1.2,
+            "amount_yi": 10.0, "est_net_yi": 0.01,
+        }
+        for code in POOL_CODES
+    }
+    path = tmp_path / "hist.json"
+    path.write_text(json.dumps({"version": 1, "days": {stale: funds}}), encoding="utf-8")
+
+    class Unpublished(FakeClient):
+        def call(self, tool_name, arguments):
+            if tool_name == "fund_get_size" and arguments["asOfDate"] > stale:
+                return size_text_unpublished(stale)
+            return super().call(tool_name, arguments)
+
+    result = wm.WindMCPAdapter(client=Unpublished(), history_path=path).fetch(AS_OF)
+    market_dates = [r["date"] for r in result.dataset["market"]]
+    assert market_dates[-1] == AS_OF
+    assert "2026-11-05" in market_dates
+    assert stale in market_dates
+    assert result.dataset["data_latest_date"] == stale
+    assert AS_OF not in {r["date"] for r in result.dataset["etf"]}
+
+
+def test_live_save_keeps_days_the_payload_omitted(tmp_path, monkeypatch):
+    """实盘库已有到 11-09 的记录时，一次只带到 11-04 的响应不能把这些天删掉。"""
+    from ntm import db
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "keep.db")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+
+    def market(day):
+        return {
+            "date": day, "index_close": 4000.0, "index_change_pct": -0.4,
+            "index_change_5d_pct": -1.2, "amount_yi": 9000.0,
+        }
+
+    def etf(day):
+        return {
+            "date": day, "code": "510300", "name": "沪深300ETF",
+            "total_share": 1e10, "share_change": 100.0, "nav": 1.2,
+            "est_net_yi": 0.01, "amount_yi": 30.0, "layer": "L2",
+            "source": "wind-mcp:test",
+        }
+
+    kept = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09"]
+    db.save_dataset({
+        "is_demo": False, "source": "wind",
+        "market": [market(d) for d in kept],
+        "etf": [etf(d) for d in kept],
+        "announcements": [], "holdings": [],
+    }, as_of="2026-11-09")
+    short = ["2026-07-13", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-10"]
+    db.save_dataset({
+        "is_demo": False, "source": "wind",
+        "market": [market(d) for d in short],
+        "etf": [etf(d) for d in short],
+        "announcements": [], "holdings": [],
+    }, as_of="2026-11-10")
+    with db.connect() as conn:
+        market_dates = [r[0] for r in conn.execute("SELECT date FROM market_daily ORDER BY date")]
+        etf_dates = [r[0] for r in conn.execute("SELECT DISTINCT date FROM etf_daily ORDER BY date")]
+        signal_dates = [r[0] for r in conn.execute("SELECT date FROM signals ORDER BY date")]
+    assert market_dates[-1] == "2026-11-10"
+    assert etf_dates[-1] == "2026-11-10"
+    assert signal_dates[-1] == "2026-11-10"
+    for day in ("2026-11-05", "2026-11-06", "2026-11-09"):
+        assert day in market_dates
+        assert day in etf_dates
+        assert day in signal_dates
+
+
 def test_unpublished_day_skipped_and_layers_aligned(tmp_path, monkeypatch):
     """T+1 份额未发布时跳过当日，且不得拿旧数据冒充、不得混算日期。"""
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
@@ -222,7 +298,8 @@ def test_unpublished_day_skipped_and_layers_aligned(tmp_path, monkeypatch):
     result = ad.fetch(AS_OF)
     assert result.dataset["data_latest_date"] == fallback
     assert AS_OF not in [r["date"] for r in result.dataset["etf"]]
-    assert all(r["date"] <= fallback for r in result.dataset["market"])
+    # 指数日可以晚于份额日，不能把已经取到的指数删掉
+    assert AS_OF in [r["date"] for r in result.dataset["market"]]
     assert all(r["date"] <= fallback for r in result.dataset["etf"])
     assert validate_dataset(result.dataset, AS_OF) == []
 

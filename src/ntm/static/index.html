@@ -24,6 +24,11 @@ h1{font-size:16px;font-weight:650;margin:0;letter-spacing:.02em}
 .status{color:var(--muted);font-variant-numeric:tabular-nums}
 .status b{color:var(--ink);font-weight:600}
 .err{display:none;margin:8px 0 12px;padding:8px 10px;border:1px solid #6b3030;border-radius:8px;color:#ffb4b4}
+.banner{display:none;margin:0 0 10px;padding:10px 12px;border:1px solid #8a3030;border-radius:10px;background:#2a1416;color:#ffd0d0;white-space:pre-line}
+.banner.show{display:block}
+.anomaly{margin:8px 0 0;color:var(--muted);font-size:13px}
+.anomaly div{margin:2px 0}
+tr.spike td{background:#3a1618}
 .signal{padding:18px 20px 16px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
 .signal.hot{border-color:#8a3030}
 .signal .label{font-size:32px;font-weight:720;letter-spacing:.01em;line-height:1.15}
@@ -65,6 +70,7 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
     <div class="status" id="status">加载中</div>
   </header>
   <div class="err" id="err"></div>
+  <div class="banner" id="vol-banner"></div>
   <section class="signal" id="signal">
     <div class="label" id="signal-label">—</div>
     <div class="meta" id="signal-meta"></div>
@@ -75,6 +81,7 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
   <section class="panel">
     <h2 id="etf-title">宽基 ETF</h2>
     <div id="etf"></div>
+    <div class="anomaly" id="anomaly"></div>
   </section>
   <section class="panel" id="ann-panel" hidden>
     <h2>公告</h2>
@@ -101,6 +108,10 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
   function cls(v){
     if (v == null) return 'flat';
     return v > 0 ? 'up' : (v < 0 ? 'down' : 'flat');
+  }
+  function plain(v){
+    var n = num(v);
+    return n == null ? '—' : n.toFixed(1);
   }
   function fmt(v, d){
     if (v == null) return '—';
@@ -164,17 +175,35 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
     }).join('');
     draw(items);
     var etfs = (momentum && momentum.items) || [];
+    var threshold = (momentum && momentum.summary && num(momentum.summary.threshold)) || 2;
     if (momentum && momentum.date) $('etf-title').textContent = '宽基 ETF · ' + momentum.date;
     $('etf').innerHTML = table(
-      [{t:'代码'},{t:'名称'},{t:'净申购(亿)',num:1},{t:'成交额(亿)',num:1},{t:'放量',num:1}],
+      [{t:'代码'},{t:'名称'},{t:'当日成交额',num:1},{t:'前日成交额',num:1},{t:'环比增量',num:1},
+       {t:'环比增长率',num:1},{t:'放量倍数',num:1},{t:'份额变化',num:1}],
       etfs.map(function(it){
-        var ch = num(it.share_change_yi);
-        return '<tr><td>' + esc(it.code) + '</td><td>' + esc(it.name) + '</td>'
-          + '<td class="num ' + cls(ch) + '">' + fmt(ch) + '</td>'
-          + '<td class="num">' + (num(it.amount_yi) == null ? '—' : Number(it.amount_yi).toFixed(1)) + '</td>'
-          + '<td class="num">' + (num(it.volume_multiple) == null ? '—' : Number(it.volume_multiple).toFixed(2)) + '</td></tr>';
-      }).join('') || '<tr><td colspan="5">无数据</td></tr>'
+        var pct = num(it.amount_change_pct);
+        var mult = num(it.volume_multiple);
+        var share = num(it.share_change_yi);
+        var hot = (mult != null && mult >= threshold) || (pct != null && pct >= 100);
+        return '<tr class="' + (hot ? 'spike' : '') + '"><td>' + esc(it.code) + '</td><td>' + esc(it.name) + '</td>'
+          + '<td class="num">' + plain(it.amount_yi) + '</td>'
+          + '<td class="num">' + plain(it.amount_prev_yi) + '</td>'
+          + '<td class="num ' + cls(num(it.amount_change_yi)) + '">' + fmt(num(it.amount_change_yi)) + '</td>'
+          + '<td class="num ' + cls(pct) + '">' + fmt(pct, 0) + '%</td>'
+          + '<td class="num">' + (mult == null ? '—' : mult.toFixed(2)) + '</td>'
+          + '<td class="num ' + cls(share) + '">' + fmt(share) + '</td></tr>';
+      }).join('') || '<tr><td colspan="8">无数据</td></tr>'
     );
+    var lines = (momentum && momentum.anomalies) || [];
+    $('anomaly').innerHTML = lines.map(function(line){ return '<div>' + esc(line) + '</div>'; }).join('');
+    var banner = $('vol-banner');
+    if (momentum && momentum.volume_alert){
+      banner.className = 'banner show';
+      banner.textContent = lines.filter(function(line){ return line.indexOf('没有 ETF') !== 0; }).join('\n');
+    } else {
+      banner.className = 'banner';
+      banner.textContent = '';
+    }
     var aItems = (anns && anns.items) || [];
     if (aItems.length){
       $('ann-panel').hidden = false;

@@ -66,6 +66,49 @@ def test_all_share_up_does_not_claim_signal():
     assert s.is_signal is False
 
 
+def test_anomaly_report_states_turnover_and_share_change():
+    hot = m.build_row(
+        code="588000", name="科创50ETF华夏（华夏科创50ETF）",
+        current=30, previous=10, history=[10] * 5, share_change_yi=1.2,
+    )
+    report = m.anomaly_report([hot], 2)
+    assert report["alert"] is True
+    line = report["lines"][0]
+    assert line.startswith("科创50ETF华夏 放量 3.0 倍")
+    assert "成交额 30.0 亿" in line and "前日 10.0 亿" in line
+    assert "份额变化 +1.2 亿" in line
+    assert "亿份" not in line
+    doubled = m.build_row(
+        code="510300", name="沪深300ETF",
+        current=19, previous=9, history=[10] * 5, share_change_yi=-0.4,
+    )
+    both = m.anomaly_report([doubled], 2)
+    assert both["alert"] is False
+    assert "环比" in both["lines"][0]
+    quiet = m.build_row(
+        code="510050", name="上证50ETF",
+        current=11, previous=10, history=[10] * 5, share_change_yi=0.1,
+    )
+    none = m.anomaly_report([quiet], 2)
+    assert none["alert"] is False
+    assert none["lines"] == ["没有 ETF 达到 2 倍放量"]
+
+
+def test_volume_alert_uses_existing_channels_without_trade_language():
+    from ntm import db
+    from ntm.alert import dispatch_volume, volume_message
+    db.init_db()
+    text = volume_message("2026-11-10", [
+        "科创50ETF 放量 2.3 倍（成交额 40.0 亿，前日 17.0 亿，环比 +135%），份额变化 +1.1 亿",
+    ])
+    for word in ("买入", "卖出", "国家队加仓", "加仓信号"):
+        assert word not in text
+    result = dispatch_volume("2026-11-10", [text.split("\n", 1)[-1]])
+    assert any(item["channel"] == "inbox" and item["status"] == "sent" for item in result)
+    again = dispatch_volume("2026-11-10", [text.split("\n", 1)[-1]])
+    assert any(item["status"] == "skipped" for item in again)
+
+
 def test_no_spike_observation():
     rows = [m.build_row(code="510300", name="A", current=40, previous=40,
                         history=[40] * 5)]

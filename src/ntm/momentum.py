@@ -150,6 +150,37 @@ class MomentumSummary:
         }
 
 
+def anomaly_report(
+    rows: list[MomentumRow], threshold: float = DEFAULT_SPIKE_MULTIPLE,
+) -> dict:
+    """收盘后的放量一句报。
+
+    成交额是二级市场换手，份额变化才是一级市场申购。两者并列，不下买入结论。
+
+    TODO: 汇金系前十大持有人。Wind MCP 没有十大流通股东工具，持仓按季度披露且
+    滞后 1–2 个季度，不能做成日频买入触发。接上 L1 后再对照，不要用成交额冒充。
+    """
+    lines: list[str] = []
+    alert = False
+    for row in rows:
+        hit_multiple = row.volume_multiple >= threshold
+        hit_pct = row.amount_change_pct >= 100
+        if not (hit_multiple or hit_pct):
+            continue
+        if hit_multiple:
+            alert = True
+        short = row.name.split("（", 1)[0]
+        lines.append(
+            f"{short} 放量 {row.volume_multiple:.1f} 倍"
+            f"（成交额 {row.amount_yi:.1f} 亿，前日 {row.amount_prev_yi:.1f} 亿，"
+            f"环比 {row.amount_change_pct:+.0f}%），份额变化 {row.share_change_yi:+.1f} 亿"
+        )
+    if not lines:
+        shown = int(threshold) if float(threshold).is_integer() else threshold
+        lines = [f"没有 ETF 达到 {shown} 倍放量"]
+    return {"lines": lines, "alert": alert}
+
+
 def summarize(
     date: str, rows: list[MomentumRow], threshold: float = DEFAULT_SPIKE_MULTIPLE,
 ) -> MomentumSummary:
@@ -190,4 +221,5 @@ __all__ = [
     "DEFAULT_SPIKE_MULTIPLE", "DEFAULT_MA_WINDOW", "MOMENTUM_CAVEAT",
     "amount_change", "amount_change_pct", "moving_average", "volume_multiple",
     "is_spike", "MomentumRow", "MomentumSummary", "build_row", "summarize",
+    "anomaly_report",
 ]

@@ -141,6 +141,7 @@ def test_homepage_is_an_operator_dashboard():
     html = page.text
     assert "国家队资金监控" in html
     assert 'id="signal-label"' in html
+    assert "当日成交额" in html and "放量倍数" in html and "份额变化" in html
     assert "/api/overview" in html
     for gone in ("参考策略存档", "噪音屏蔽", "静态演示页面", "跟踪方向与核实", "确权与交叉验证"):
         assert gone not in html
