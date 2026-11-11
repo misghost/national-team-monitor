@@ -3,1328 +3,239 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>国家队资金三层监控看板</title>
+<title>国家队资金监控</title>
 <style>
 :root{
-  --bg:#0f172a;
-  --bg2:#152341;
-  --card:#ffffff;
-  --ink:#1e293b;
-  --ink-2:#334155;
-  --ink-soft:#64748b;
-  --line:#e2e8f0;
-  --on-dark:#e2e8f0;
-  --on-dark-soft:#94a3b8;
-  --up:#ef4444;      /* A股习惯：上涨 / 净流入 红 */
-  --down:#10b981;    /* A股习惯：下跌 / 净流出 绿 */
-  --l1:#2563eb;
-  --l2:#d97706;
-  --l3:#7c3aed;
-  --warn:#ea580c;
-  --conf-high:#2563eb;
-  --conf-medium:#d97706;
-  --conf-low:#64748b;
+  --bg:#0c0f14;
+  --card:#161b22;
+  --line:#2a3140;
+  --ink:#e7ecf3;
+  --muted:#8b95a8;
+  --up:#e54545;
+  --down:#1aa36a;
+  --flat:#9aa3b2;
 }
 *{box-sizing:border-box}
-[hidden]{display:none!important}
-html,body{margin:0;padding:0}
-body{
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-  background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%) fixed;
-  color:var(--on-dark);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  font-size:14px;
-  line-height:1.6;
-  -webkit-font-smoothing:antialiased;
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.45 "Segoe UI","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:16px 18px 28px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:12px}
+h1{font-size:16px;font-weight:650;margin:0;letter-spacing:.02em}
+.status{color:var(--muted);font-variant-numeric:tabular-nums}
+.status b{color:var(--ink);font-weight:600}
+.err{display:none;margin:8px 0 12px;padding:8px 10px;border:1px solid #6b3030;border-radius:8px;color:#ffb4b4}
+.signal{padding:18px 20px 16px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.signal.hot{border-color:#8a3030}
+.signal .label{font-size:32px;font-weight:720;letter-spacing:.01em;line-height:1.15}
+.signal .meta{margin-top:8px;color:var(--muted);font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi .k{color:var(--muted);font-size:12px}
+.kpi .v{font-size:22px;font-weight:680;font-variant-numeric:tabular-nums;margin-top:2px}
+.checks{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+.check{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);
+  border-radius:999px;background:var(--card);color:var(--muted);font-size:13px}
+.check.on{color:var(--ink);border-color:#3d4a63}
+.mark{width:8px;height:8px;border-radius:50%;background:#3a4254;display:inline-block}
+.check.on .mark{background:var(--ink)}
+.chart{height:320px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.panel{margin-top:12px}
+.panel h2{font-size:13px;font-weight:650;margin:0 0 8px;color:var(--muted)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table{width:100%;border-collapse:collapse;background:var(--card)}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:600;font-size:12px}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right}
+.up{color:var(--up)}
+.down{color:var(--down)}
+.flat{color:var(--flat)}
+footer{margin-top:18px;color:var(--muted);font-size:12px}
+@media(max-width:800px){
+  .kpis{grid-template-columns:1fr 1fr}
+  .signal .label{font-size:26px}
+  header{flex-direction:column;align-items:flex-start}
 }
-.num{font-variant-numeric:tabular-nums}
-
-/* ---------- 演示数据警示条 ---------- */
-.demo-banner{
-  position:sticky;top:0;z-index:50;
-  background:linear-gradient(90deg,#dc2626 0%,#ea580c 100%);
-  color:#fff;
-  box-shadow:0 4px 18px rgba(0,0,0,.28);
-}
-.demo-banner .inner{
-  max-width:1440px;margin:0 auto;padding:10px 24px;
-  display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;
-}
-.demo-banner .mark{
-  flex:none;font-weight:800;font-size:15px;letter-spacing:.5px;
-  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.55);
-  padding:3px 12px;border-radius:6px;white-space:nowrap;
-}
-.demo-banner .sub{font-size:12.5px;opacity:.97;line-height:1.5}
-.demo-banner.live{background:linear-gradient(90deg,#0f766e 0%,#0e7490 100%)}
-@media(max-width:760px){.demo-banner .inner{padding:9px 14px}.demo-banner .sub{font-size:11.5px}}
-
-/* ---------- 页头 ---------- */
-.site-header{max-width:1440px;margin:0 auto;padding:26px 24px 6px;width:100%}
-.brand-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:14px}
-.brand h1{margin:0;font-size:24px;font-weight:700;letter-spacing:.5px}
-.brand .sub{margin:5px 0 0;color:var(--on-dark-soft);font-size:13px}
-.header-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12.5px;color:var(--on-dark-soft)}
-.chip-dark{
-  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
-  border-radius:999px;padding:3px 11px;color:var(--on-dark);white-space:nowrap;
-}
-.conn-badge{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
-.conn-dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block}
-.conn-badge.ok .conn-dot{background:#34d399}
-.conn-badge.bad .conn-dot{background:#f87171}
-
-.offline-notice{
-  max-width:1440px;margin:16px auto 0;width:calc(100% - 48px);
-  background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid var(--warn);
-  color:#9a3412;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.7;
-}
-.offline-notice b{color:#7c2d12}
-
-/* ---------- 布局 ---------- */
-main{flex:1 0 auto;width:100%}
-.wrap{max-width:1440px;margin:0 auto;padding:0 24px 32px;width:100%}
-.block{margin-top:28px}
-.block-head{margin:0 0 14px;display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 14px}
-.block-head h2{
-  margin:0;font-size:17px;font-weight:700;color:var(--on-dark);
-  padding-left:12px;border-left:4px solid #38bdf8;line-height:1.3;
-}
-.block-head .desc{font-size:12px;color:var(--on-dark-soft)}
-.grid{display:grid;gap:16px}
-.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-.grid-lists{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr)}
-@media(max-width:1100px){.grid-3,.grid-2,.grid-lists{grid-template-columns:1fr}}
-
-.card{
-  background:var(--card);color:var(--ink);
-  border:1px solid rgba(255,255,255,.6);
-  border-radius:12px;padding:20px;
-  box-shadow:0 8px 26px rgba(2,8,23,.22);
-  min-width:0;
-}
-.card h3{margin:0 0 12px;font-size:15px;font-weight:700;color:#0f172a}
-.card .muted{color:var(--ink-soft);font-size:12px}
-
-/* ---------- 标签 / 徽章 ---------- */
-.tag{display:inline-block;font-size:11px;line-height:1.5;padding:1px 8px;border-radius:5px;font-weight:600;white-space:nowrap;vertical-align:middle}
-.tag-l1{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
-.tag-l2,.tag-est{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
-.tag-l3{background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe}
-.tag-neutral{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
-.tag-red{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
-.tag-green{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
-.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;white-space:nowrap}
-.conf-high{background:var(--conf-high)}
-.conf-medium{background:var(--conf-medium)}
-.conf-low{background:var(--conf-low)}
-
-/* ---------- 信号状态卡片 ---------- */
-.signal-card{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px}
-@media(max-width:900px){.signal-card{grid-template-columns:1fr}}
-.signal-title{font-size:21px;font-weight:800;color:#0f172a;margin:8px 0 6px;line-height:1.35}
-.signal-date{font-size:12px;color:var(--ink-soft)}
-.conf-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 0}
-.conf-row .k{font-size:12px;color:var(--ink-soft)}
-.signal-warn{
-  margin:14px 0 12px;padding:10px 12px;border-radius:8px;
-  background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;
-  font-size:12.5px;font-weight:600;line-height:1.7;
-}
-.signal-text{font-size:13px;color:var(--ink-2);line-height:1.85}
-.signal-text p{margin:0 0 8px}
-.signal-text .lbl{color:var(--ink-soft);font-size:12px;font-weight:600}
-.signal-side{border-left:1px dashed var(--line);padding-left:22px}
-@media(max-width:900px){.signal-side{border-left:0;border-top:1px dashed var(--line);padding-left:0;padding-top:16px}}
-.cond-chips{display:flex;flex-direction:column;gap:9px;margin-top:10px}
-.chip{
-  display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:8px;
-  background:#f8fafc;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2);
-}
-.chip .box{
-  flex:none;width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:800;color:#fff;
-}
-.chip.met .box{background:var(--l1)}
-.chip.unmet .box{background:#94a3b8}
-.chip .state{margin-left:auto;font-size:11px;font-weight:700;white-space:nowrap}
-.chip.met .state{color:var(--l1)}
-.chip.unmet .state{color:#94a3b8}
-
-/* ---------- 三层数据可信度 ---------- */
-.layer-card{border-top:4px solid var(--line)}
-.layer-card.l1{border-top-color:var(--l1)}
-.layer-card.l2{border-top-color:var(--l2)}
-.layer-card.l3{border-top-color:var(--l3)}
-.layer-top{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-.layer-id{font-size:18px;font-weight:800;letter-spacing:.5px}
-.layer-card.l1 .layer-id{color:var(--l1)}
-.layer-card.l2 .layer-id{color:var(--l2)}
-.layer-card.l3 .layer-id{color:var(--l3)}
-.layer-name{font-size:14px;font-weight:700;color:#0f172a}
-.kv{display:flex;flex-direction:column;gap:0;margin:0 0 12px}
-.kv-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed #eef2f7;font-size:12.5px}
-.kv-row:last-child{border-bottom:0}
-.kv-k{color:var(--ink-soft);flex:none}
-.kv-v{color:var(--ink);text-align:right;font-weight:600}
-.src{background:#f8fafc;border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-size:12px;color:var(--ink-2);line-height:1.7}
-.src b{color:var(--ink-soft);font-weight:600}
-
-/* ---------- 图表 ---------- */
-.chart-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
-.chart-head h3{margin:0}
-.chart-note{font-size:11.5px;color:var(--ink-soft);margin:0 0 8px;line-height:1.6}
-.chart{width:100%;height:320px}
-.chart.empty{display:flex;align-items:center;justify-content:center}
-.chart-empty{
-  width:100%;height:100%;min-height:200px;display:flex;align-items:center;justify-content:center;
-  text-align:center;padding:20px;color:var(--ink-soft);font-size:13px;line-height:1.8;white-space:pre-line;
-  background:repeating-linear-gradient(45deg,#fbfcfe,#fbfcfe 10px,#f5f7fb 10px,#f5f7fb 20px);
-  border:1px dashed var(--line);border-radius:8px;
-}
-.legend-line{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:10px;font-size:11.5px;color:var(--ink-soft)}
-.legend-line span{display:inline-flex;align-items:center;gap:6px}
-.dot{width:10px;height:10px;border-radius:2px;display:inline-block}
-.glossary{
-  margin-top:16px;background:#f8fafc;border:1px solid var(--line);border-radius:9px;padding:12px 15px;
-}
-.glossary .g-title{font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:8px}
-.glossary-item{font-size:12.5px;color:var(--ink-2);line-height:1.75;margin:3px 0}
-.glossary-item b{color:#0f172a}
-
-/* ---------- 三重共振检查表 ---------- */
-.cond-table{display:flex;flex-direction:column;gap:0;margin-top:4px}
-.cond-row{
-  display:grid;grid-template-columns:44px minmax(0,1fr) 92px minmax(0,1.2fr);
-  gap:12px;align-items:center;padding:12px 6px;border-bottom:1px solid var(--line);font-size:13px;
-}
-@media(max-width:760px){.cond-row{grid-template-columns:34px minmax(0,1fr) 84px;grid-auto-rows:auto}.cond-row .cond-detail{grid-column:2 / -1}}
-.cond-no{
-  width:28px;height:28px;border-radius:50%;background:#eff6ff;color:var(--l1);
-  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;
-}
-.cond-label{font-weight:600;color:var(--ink)}
-.cond-state{text-align:center}
-.cond-detail{color:var(--ink-2);font-size:12.5px;line-height:1.6}
-.conclusion{
-  margin-top:16px;padding:13px 15px;border-radius:9px;font-size:13px;line-height:1.8;font-weight:600;
-}
-.conclusion.ok{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412}
-.conclusion.warn{background:#f1f5f9;border:1px solid var(--line);color:#475569}
-.caveat{margin-top:10px;font-size:12px;color:var(--ink-soft);line-height:1.75}
-
-/* ---------- 表格 / 列表 ---------- */
-.notice-box{
-  background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;
-  border-radius:7px;padding:10px 12px;font-size:12px;color:#92400e;line-height:1.8;margin-bottom:12px;
-}
-.trap-list{margin:4px 0 0;padding-left:18px}
-.trap-list li{margin:2px 0}
-.tbl-wrap{width:100%;overflow-x:auto}
-.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:560px}
-.tbl th{
-  background:#f1f5f9;color:#475569;font-weight:700;text-align:left;
-  padding:9px 10px;border-bottom:2px solid var(--line);white-space:nowrap;
-}
-.tbl td{padding:9px 10px;border-bottom:1px solid #eef2f7;color:var(--ink-2);vertical-align:top}
-.tbl tbody tr:hover{background:#f8fafc}
-.tbl .nowrap{white-space:nowrap}
-.tbl .right{text-align:right}
-.tbl a{color:var(--l1);text-decoration:none}
-.tbl a:hover{text-decoration:underline}
-.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
-.pill-blue{background:#eff6ff;color:#1d4ed8}
-.pill-gray{background:#f1f5f9;color:#64748b}
-.pill-amber{background:#fffbeb;color:#b45309}
-.empty-row td{text-align:center;color:var(--ink-soft);padding:22px 10px}
-
-/* ---------- 噪音屏蔽 ---------- */
-.noise-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:4px}
-@media(max-width:900px){.noise-grid{grid-template-columns:1fr}}
-.noise-item{
-  display:flex;gap:11px;padding:12px 13px;border:1px solid var(--line);
-  border-radius:9px;background:#fafbfd;
-}
-.noise-x{
-  flex:none;width:22px;height:22px;border-radius:50%;background:#fee2e2;color:#b91c1c;
-  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;
-}
-.noise-title{font-size:13px;font-weight:700;color:#0f172a}
-.noise-desc{font-size:12px;color:var(--ink-soft);line-height:1.7;margin-top:3px}
-.noise-foot{margin-top:14px;font-size:12px;color:var(--ink-soft)}
-
-/* ---------- 页脚 ---------- */
-.site-footer{
-  flex:none;background:rgba(2,6,23,.55);border-top:1px solid rgba(255,255,255,.1);
-  color:var(--on-dark-soft);margin-top:12px;
-}
-.footer-inner{max-width:1440px;margin:0 auto;padding:18px 24px 22px;font-size:12px;line-height:1.9}
-.footer-inner .f-title{color:#fca5a5;font-weight:700;margin-bottom:4px}
-.footer-inner .f-line{margin:2px 0}
-.footer-inner .f-meta{margin-top:8px;color:#64748b;font-size:11.5px}
-
-/* ---------- 标的池 / 量能观察 / 参考策略（新增） ---------- */
-.tag-focus{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
-.tag-alt{background:#f8fafc;color:#475569;border:1px solid #e2e8f0}
-.tag-adopted{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
-.tag-kept{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
-.tag-rejected{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
-.momentum-flag{
-  display:inline-block;padding:1px 8px;border-radius:5px;font-size:11px;font-weight:700;
-}
-.flag-spike{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
-.flag-normal{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
-.divergence{
-  margin-top:12px;padding:11px 14px;border-radius:8px;font-size:12.5px;line-height:1.75;
-  background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid var(--warn);color:#9a3412;
-}
-.divergence b{color:#7c2d12}
-.claim-box{
-  margin-top:14px;padding:12px 14px;border-radius:8px;
-  background:#f8fafc;border:1px dashed #cbd5e1;font-size:12px;line-height:1.8;color:var(--ink-2);
-}
-.claim-box .claim-title{font-weight:700;color:#0f172a;margin-bottom:5px}
-.claim-item{margin:4px 0}
-.strat-item{
-  border:1px solid var(--line);border-radius:9px;padding:11px 13px;background:#fafbfd;
-}
-.strat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
-@media(max-width:900px){.strat-grid{grid-template-columns:1fr}}
-.strat-item .st-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:5px}
-.strat-item .st-title{font-weight:700;color:#0f172a;font-size:13px}
-.strat-item .st-orig{font-size:12px;color:var(--ink-2);line-height:1.7}
-.strat-item .st-reason{font-size:11.5px;color:var(--ink-soft);line-height:1.7;margin-top:5px;padding-top:5px;border-top:1px dashed #e2e8f0}
-.strat-counts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.pool-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--ink-soft)}
-
-/* ---------- 数据源接入状态 ---------- */
-.ds-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px}
-.ds-badge{font-weight:700;font-size:13px;padding:4px 12px;border-radius:6px;color:#fff}
-.ds-demo{background:#dc2626}.ds-snap{background:#d97706}.ds-live{background:#059669}
-.ds-src{font-size:12px;color:var(--ink-soft)}
-.ds-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-@media(max-width:900px){.ds-grid{grid-template-columns:1fr}}
-.ds-layer{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--card-soft)}
-.ds-layer-h{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px}
-.ds-ok{color:#059669;font-size:12px}.ds-off{color:#dc2626;font-size:12px}
-.ds-note{font-size:12px;line-height:1.6;color:var(--ink-soft)}
-.ds-fields{font-size:11px;color:var(--ink-soft);margin-top:6px;word-break:break-word}
-.ds-sec{margin-top:16px;font-size:13px}
-.ds-sec ul{margin:8px 0 0;padding-left:20px;font-size:12px;line-height:1.8;color:var(--ink-soft)}
 </style>
 </head>
 <body>
-
-<!-- 1. 演示数据警示条：常驻、醒目 -->
-<div class="demo-banner" role="alert" id="data-banner">
-  <div class="inner">
-    <span class="mark" id="data-banner-mark">演示数据 · 不可用于实盘决策</span>
-    <span class="sub">本系统所有判断均为基于公开数据的概率推断，无法确权，不构成投资建议；本看板不提供任何个股操作建议，仅输出「托底信号状态」。</span>
-  </div>
-</div>
-
-<!-- 页头 -->
-<header class="site-header">
-  <div class="brand-row">
-    <div class="brand">
-      <h1>国家队资金三层监控看板</h1>
-      <p class="sub">通过监控国家队资金情况判断市场环境 · L1 实测 / L2 估算 / L3 代理交叉验证</p>
-    </div>
-    <div class="header-meta">
-      <span class="chip-dark" id="as-of">数据日期：加载中…</span>
-      <span class="chip-dark" id="demo-chip">演示数据</span>
-      <span class="conn-badge" id="conn-badge"><i class="conn-dot"></i><span id="conn-text">正在连接后端…</span></span>
-    </div>
-  </div>
-</header>
-
-<div class="offline-notice" id="offline-notice" hidden>
-  <b>无法连接后端。</b>当前为离线预览：所有数据接口暂不可用，页面中的行情图表、信号与列表均不展示数值，也不构成任何信号判断。请通过本项目的 FastAPI 服务提供本页后访问，以加载演示数据。下方方法论说明、噪音屏蔽清单与免责声明仍然有效。
-</div>
-
-<main>
 <div class="wrap">
-
-  <!-- 1.5 数据源接入状态：真实 / 演示必须可区分 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>数据源接入状态</h2>
-      <span class="desc">真实与演示严格区分；接入缺口、字段口径与外部数据源核查结论</span>
-    </div>
-    <div class="card" id="datasource-box"><span class="muted">正在加载数据源状态…</span></div>
+  <header>
+    <h1>国家队资金监控</h1>
+    <div class="status" id="status">加载中</div>
+  </header>
+  <div class="err" id="err"></div>
+  <section class="signal" id="signal">
+    <div class="label" id="signal-label">—</div>
+    <div class="meta" id="signal-meta"></div>
   </section>
-
-  <!-- 2. 信号状态卡片 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>当前托底信号状态</h2>
-      <span class="desc">信号均为概率推断，非实锤；无法确认买方身份</span>
-    </div>
-    <div class="card signal-card" id="signal-card">
-      <div class="signal-main" id="signal-main">
-        <div class="muted">正在加载信号数据…</div>
-      </div>
-      <div class="signal-side" id="signal-side">
-        <div class="muted">正在加载共振条件…</div>
-      </div>
-    </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="checks" id="checks"></div>
+  <div class="chart" id="chart"></div>
+  <section class="panel">
+    <h2 id="etf-title">宽基 ETF</h2>
+    <div id="etf"></div>
   </section>
-
-  <!-- 3. 三层数据可信度说明区 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>三层数据可信度</h2>
-      <span class="desc">公开数据无法日频归因到具体主体，逐层标注时效、可归因性与置信度</span>
-    </div>
-    <div class="grid grid-3" id="layers-grid"></div>
-    <div class="card" style="margin-top:16px;padding:14px 18px" id="glossary-box"></div>
+  <section class="panel" id="ann-panel" hidden>
+    <h2>公告</h2>
+    <div id="anns"></div>
   </section>
-
-  <!-- 3.5 七只宽基 ETF 标的池 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>7 只核心宽基 ETF 标的池</h2>
-      <span class="desc">观察对象清单 · 列入不等于国家队持有，不构成任何标的推荐</span>
-    </div>
-    <div class="card">
-      <div class="chart-head">
-        <h3>跟踪方向与核实状态</h3>
-        <span class="tag tag-l3">L3 · 观察清单</span>
-      </div>
-      <p class="chart-note">代码 / 名称 / 管理人 / 跟踪指数为可核实事实；「2026 重点观察」源自未经确权的方向性观点，仅作前端高亮，<b>不参与信号计算、非推荐</b>。材料把 <code>159845</code> 标为「易方达」，经多源核实实为<b>华夏中证1000ETF</b>，本池已修正。</p>
-      <div class="tbl-wrap" id="etf-pool-box"></div>
-      <div class="claim-box" id="etf-claims-box"></div>
-      <div class="pool-legend">
-        <span><span class="tag tag-focus">2026 重点观察</span> 视频观点、未确权</span>
-        <span><span class="tag tag-alt">备选标的</span> 补充流动性</span>
-        <span id="pool-validation"></span>
-      </div>
-    </div>
+  <section class="panel" id="hold-panel" hidden>
+    <h2>季度持仓</h2>
+    <div id="holds"></div>
   </section>
-
-  <!-- 3.6 量能异动观察 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>量能异动观察（辅助）</h2>
-      <span class="desc">成交额 / 环比 / 放量倍数 · 客观观测，不是托底信号，不含买卖指令</span>
-    </div>
-    <div class="card">
-      <div class="chart-head">
-        <h3>7 只 ETF 成交额与份额对照</h3>
-        <span class="tag tag-est">辅助观测 · 不可归因</span>
-      </div>
-      <p class="chart-note">放量倍数 = 当日成交额 ÷ 前 5 日平均成交额。<b>成交额放量属二级市场成交活跃度，不改变 ETF 总份额、无法识别买方身份</b>；「份额变化」为 L2 估算口径，二者分列对照。<b>放量 2 倍 ≠ 份额增加 ≠ 国家队加仓</b>，本区不产生任何操作建议。</p>
-      <div class="divergence" id="momentum-summary">正在加载量能观测…</div>
-      <div class="tbl-wrap" id="momentum-box"></div>
-      <div class="claim-box" id="momentum-caveat"></div>
-    </div>
-  </section>
-
-  <!-- 4. 图表区 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>估算净申购与信号时间轴</h2>
-      <span class="desc">L2 为全市场口径估算，不可归因到具体主体</span>
-    </div>
-    <div class="grid grid-2">
-      <div class="card">
-        <div class="chart-head">
-          <h3>近 30 日宽基 ETF 估算净申购额</h3>
-          <span class="tag tag-est">估算 · 不可归因</span>
-        </div>
-        <p class="chart-note">柱状为 L2 估算净申购额（份额变动 × 净值，全市场一级市场口径）；折线为指数收盘点位。红＝净申购为正 / 上涨，绿＝净申购为负 / 下跌（A 股习惯）。<b>无法识别申购人</b>。</p>
-        <div class="chart" id="chart-etf"></div>
-        <div class="legend-line">
-          <span><i class="dot" style="background:#ef4444"></i>净申购为正 / 上涨（红）</span>
-          <span><i class="dot" style="background:#10b981"></i>净申购为负 / 下跌（绿）</span>
-          <span><i class="dot" style="background:#2563eb;border-radius:50%"></i>指数收盘点位（右轴）</span>
-          <span class="tag tag-est">估算 · 不可归因</span>
-        </div>
-      </div>
-      <div class="card">
-        <div class="chart-head">
-          <h3>近 90 日信号状态分布</h3>
-          <span class="tag tag-est">估算 · 不可归因</span>
-        </div>
-        <p class="chart-note">信号由 L2 估算与 L3 公告交叉推导，<b>所有信号均为推断、非实锤</b>，确权标记恒为「否」；竖虚线标注政策底信号出现日。</p>
-        <div class="chart" id="chart-signals"></div>
-        <div class="legend-line">
-          <span><i class="dot" style="background:#f59e0b;border-radius:50%"></i>政策底信号（推断）</span>
-          <span><i class="dot" style="background:#3b82f6;border-radius:50%"></i>仅有增量资金承接</span>
-          <span><i class="dot" style="background:#0891b2;border-radius:50%"></i>仅有公告</span>
-          <span><i class="dot" style="background:#94a3b8;border-radius:50%"></i>无信号</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 5. 三重共振条件检查表 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>三重共振条件检查表</h2>
-      <span class="desc">三条件需同时满足；缺任一条件即降级为「仅有大额增量资金承接」</span>
-    </div>
-    <div class="card" id="conditions-box">
-      <div class="muted">正在加载条件数据…</div>
-    </div>
-  </section>
-
-  <!-- 6. 官方公告（L3）与季度持仓确权（L1） -->
-  <section class="block">
-    <div class="block-head">
-      <h2>确权与交叉验证材料</h2>
-      <span class="desc">L3 代理线索 / L1 季度实测，二者均不等于实时交易归因</span>
-    </div>
-    <div class="grid grid-lists">
-      <div class="card">
-        <div class="chart-head">
-          <h3>官方公告与政策工具</h3>
-          <span class="tag tag-l3">L3 · 代理 / 交叉验证</span>
-        </div>
-        <p class="chart-note">时效 T+0~T+1 · 不可归因 · 置信度中。公告仅为配合验证的线索，不能据此确认任何主体的实际交易行为。</p>
-        <div class="tbl-wrap" id="announcements-box"></div>
-      </div>
-      <div class="card">
-        <div class="chart-head">
-          <h3>季度持仓确权</h3>
-          <span class="tag tag-l1">L1 · 实测（季度确权）</span>
-        </div>
-        <p class="chart-note">时效滞后 1–2 季 · 可归因（公开披露口径）· 置信度高。反映的是报告期披露口径，<b>不代表实时持仓变动</b>。</p>
-        <div class="notice-box" id="holdings-notice"></div>
-        <div class="tbl-wrap" id="holdings-box"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 6.5 参考策略存档与实现取舍 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>参考策略存档与实现取舍</h2>
-      <span class="desc">完整保留提供的监控方案 / 交易规则 / 复盘流程 / 风险提示原文，逐条标注处置结论</span>
-    </div>
-    <div class="card">
-      <div class="chart-head">
-        <h3>逐条处置说明</h3>
-        <span class="tag tag-neutral">原文存档 · 系统不执行交易指令</span>
-      </div>
-      <p class="chart-note" id="strategy-statement">本系统定位为「分层监控 + 带置信度的概率推断」，不提供任何买卖、仓位或择时指令；所有「国家队资金」判断均为无法确权的概率推断。</p>
-      <div class="strat-counts" id="strategy-counts"></div>
-      <div class="strat-grid" id="strategy-box"></div>
-    </div>
-  </section>
-
-  <!-- 7. 噪音屏蔽清单 -->
-  <section class="block">
-    <div class="block-head">
-      <h2>噪音屏蔽清单</h2>
-      <span class="desc">以下口径与说法一律不作为信号判据</span>
-    </div>
-    <div class="card" id="noise-box">
-      <div class="muted">正在加载…</div>
-    </div>
-  </section>
-
+  <footer id="foot"></footer>
 </div>
-</main>
-
-<!-- 8. 页脚固定免责声明 -->
-<footer class="site-footer">
-  <div class="footer-inner">
-    <div class="f-title" id="footer-title">免责声明 · 演示数据 · 不可用于实盘决策</div>
-    <div class="f-line" id="footer-disclaimer">本系统所有判断均为基于公开数据的概率推断，无法确权，不构成投资建议。</div>
-    <div class="f-line">公开数据无法日频归因到具体主体；L2 估算仅为全市场一级市场净申购口径，无法识别申购人；所有信号均为「推断，非实锤」，无法确认买方身份。</div>
-    <div class="f-line">本看板不提供任何个股操作建议，仅输出「托底信号状态」；名单进出 ≠ 增减持。</div>
-    <div class="f-meta" id="footer-meta">国家队资金三层监控看板 · 静态演示页面</div>
-  </div>
-</footer>
-
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 (function(){
-  'use strict';
-
-  /* ============ 常量与工具 ============ */
-  var API = {
-    health:'/api/health',
-    overview:'/api/overview',
-    etf:'/api/etf/shares?days=30',
-    etfpool:'/api/etf/pool',
-    momentum:'/api/etf/momentum',
-    strategy:'/api/reference/strategy',
-    signals:'/api/signals?days=90',
-    announcements:'/api/announcements?limit=10',
-    holdings:'/api/holdings?limit=20',
-    methodology:'/api/methodology',
-    datasource:'/api/datasource'
-  };
-  var UP = '#ef4444', DOWN = '#10b981';
-  var CONF_LABEL = { high:'高', medium:'中', low:'低' };
-  var STATE_META = {
-    NO_SIGNAL:{ y:0, label:'无信号', color:'#94a3b8' },
-    INFLOW_ONLY:{ y:1, label:'仅有增量资金承接', color:'#3b82f6' },
-    ANNOUNCEMENT_ONLY:{ y:2, label:'仅有公告', color:'#0891b2' },
-    POLICY_BOTTOM_PROBABLE:{ y:3, label:'政策底信号（推断，非实锤）', color:'#f59e0b' }
-  };
-  var COND_ORDER = [
-    { key:'market_drop', no:'①' },
-    { key:'etf_sync', no:'②' },
-    { key:'official', no:'③' }
-  ];
-
-  // 方法论静态兜底：仅用于接口不可用时的说明展示，不伪装成行情数据
-  var FALLBACK_LAYERS = [
-    { layer:'L1', name:'实测（季度确权）', timeliness:'滞后 1–2 季', attributable:true, confidence:'high', sources:'上市公司十大流通股东、ETF 半年报/年报前十大持有人' },
-    { layer:'L2', name:'估算（T+1）', timeliness:'T+1', attributable:false, confidence:'low', sources:'宽基 ETF 每日总份额 × 净值' },
-    { layer:'L3', name:'代理/交叉验证', timeliness:'T+0~T+1', attributable:false, confidence:'medium', sources:'央行/汇金/国资委公告、互换便利、回购增持再贷款、融资余额' }
-  ];
-  var FALLBACK_TRAPS = ['名单进出≠增减持','持股数变动须按送转股复权','十大股东与十大流通股东口径分开','用披露日而非报告期末做时点'];
-  var FALLBACK_GLOSSARY = [{ term:'净申购额', definition:'份额增量 × 当日净值，仅代表全市场一级市场净申购，无法识别申购人' }];
-  var NOISE_ITEMS = [
-    { t:'主力资金流入指标', d:'口径不透明、无法复核，不能作为判据。' },
-    { t:'所谓国家队席位', d:'无公开权威席位标识，属臆测，不予采信。' },
-    { t:'单只ETF放量', d:'无法区分一级市场申购方与二级市场交易方，不能归因。' },
-    { t:'网传内部名单', d:'非公开信息，无法核实，一律屏蔽。' },
-    { t:'把净流入说成「国家队进场 X 亿」', d:'将 L2 全市场估算额错误确权到具体主体并冠以金额，是典型误读，予以屏蔽。' }
-  ];
-
-  function $(id){ return document.getElementById(id); }
-  function h(v){
-    if(v===null||v===undefined) return '';
-    // 用 charCode 拼接实体，避免在源码里直接书写 HTML 实体
-    var A = String.fromCharCode(38);
-    return String(v)
-      .replace(/&/g, A + 'amp;')
-      .replace(/</g, A + 'lt;')
-      .replace(/>/g, A + 'gt;')
-      .replace(/"/g, A + 'quot;')
-      .replace(/'/g, A + '#39;');
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
-  function arr(v){ return Array.isArray(v) ? v : []; }
-  function fmtYi(v, signed){
-    var n = Number(v)||0, s = Math.abs(n).toFixed(1);
-    return (signed ? (n>0?'+':(n<0?'-':'')) : (n<0?'-':'')) + s + ' 亿元';
+  function num(v){
+    var n = Number(v);
+    return isFinite(n) ? n : null;
   }
-  function fmtPct(v, signed){
-    var n = Number(v)||0, s = Math.abs(n).toFixed(2);
-    return (signed ? (n>0?'+':(n<0?'-':'')) : (n<0?'-':'')) + s + '%';
+  function cls(v){
+    if (v == null) return 'flat';
+    return v > 0 ? 'up' : (v < 0 ? 'down' : 'flat');
   }
-  function fmtNum(v){
-    var n = Number(v)||0;
-    try { return n.toLocaleString('zh-CN',{maximumFractionDigits:2}); } catch(e){ return String(n); }
+  function fmt(v, d){
+    if (v == null) return '—';
+    var n = Number(v);
+    if (!isFinite(n)) return '—';
+    return (n > 0 ? '+' : '') + n.toFixed(d == null ? 1 : d);
   }
-  function fmtShares(v){ return ((Number(v)||0)/1e8).toFixed(2) + ' 亿股'; }
-  function fmtMD(s){ return String(s||'').slice(5); }
-  function confLabel(c){ return CONF_LABEL[c] || h(c || '未标注'); }
-  function confClass(c){ return 'conf-' + (CONF_LABEL[c] ? c : 'low'); }
-  function safeUrl(u){
-    var s = String(u||'');
-    return /^https?:\/\//i.test(s) ? s : '';
+  function sumLast(items, n){
+    var slice = items.slice(-n);
+    var t = 0;
+    for (var i = 0; i < slice.length; i++) t += num(slice[i].net_subscription_yi) || 0;
+    return slice.length ? t : null;
   }
-  function guard(name, fn){
-    try { fn(); } catch(e){ if(window.console && console.warn){ console.warn('[ntm] 区块渲染异常：'+name, e); } }
+  function table(headers, rows){
+    return '<div class="scroll"><table><thead><tr>' + headers.map(function(h){
+      return '<th class="' + (h.num ? 'num' : '') + '">' + esc(h.t) + '</th>';
+    }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
-
-  /* ============ 数据获取：所有 fetch 均 try/catch ============ */
-  function safeFetch(url){
-    try {
-      return fetch(url, { cache:'no-store' })
-        .then(function(res){
-          if(!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : '无响应'));
-          return res.json();
-        })
-        .then(function(data){ return { ok:true, data:data }; })
-        .catch(function(e){ return { ok:false, error:(e && e.message) ? e.message : String(e) }; });
-    } catch(e){
-      return Promise.resolve({ ok:false, error:(e && e.message) ? e.message : String(e) });
+  function fail(msg){
+    var el = $('err');
+    el.style.display = 'block';
+    el.textContent = msg || '数据加载失败';
+    $('status').textContent = '未连接';
+  }
+  function render(overview, shares, momentum, source, anns, holds){
+    var sig = overview.signal || {};
+    var items = (shares && shares.items) || [];
+    var last = items.length ? items[items.length - 1] : null;
+    var demo = overview.is_demo === true;
+    var src = '';
+    if (!demo && source){
+      var raw = String(source.dataset_source || '');
+      src = raw && raw !== 'unknown' ? raw.split(':')[0] : (source.mode === 'snapshot' ? '未核验' : '');
     }
-  }
-  function payload(res){ return (res && res.ok && res.data && typeof res.data === 'object') ? res.data : null; }
-
-  /* ============ 图表公共 ============ */
-  var chartInstances = [];
-  function chartReady(){
-    return !!(window.echarts && typeof window.echarts.init === 'function');
-  }
-  function showChartEmpty(boxId, msg){
-    var box = $(boxId);
-    if(!box) return;
-    box.classList.add('empty');
-    box.innerHTML = '<div class="chart-empty">' + h(msg) + '</div>';
-  }
-  function initChart(boxId){
-    if(!chartReady()) return null;
-    try {
-      var c = window.echarts.init($(boxId));
-      chartInstances.push(c);
-      return c;
-    } catch(e){ return null; }
-  }
-  function emptyChartOption(msg){
-    return {
-      backgroundColor:'transparent',
-      graphic:[{ type:'text', left:'center', top:'middle',
-        style:{ text:msg, fill:'#64748b', fontSize:14, fontFamily:'sans-serif' } }],
-      xAxis:{ type:'category', show:false, data:[] },
-      yAxis:{ type:'value', show:false },
-      series:[]
-    };
-  }
-
-  /* ============ 图1：估算净申购额柱状 + 指数收盘折线（双 Y 轴） ============ */
-  function renderEtfChart(res){
-    var boxId = 'chart-etf';
-    var p = payload(res);
-    var items = p ? arr(p.items).slice() : [];
-    items.sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); });
-
-    if(!chartReady()){
-      showChartEmpty(boxId, '图表组件未加载（离线环境或 CDN 不可达）。\n联网后通过本项目后端服务访问即可查看；当前不展示任何数值。');
-      return;
+    var day = overview.as_of || (last && last.date) || '';
+    $('status').innerHTML = '<b>' + esc(day || '—') + '</b> · '
+      + (demo ? '演示' : '实盘')
+      + (src ? ' · ' + esc(src) : '');
+    var card = $('signal');
+    card.className = 'signal' + (sig.state === 'POLICY_BOTTOM_PROBABLE' ? ' hot' : '');
+    $('signal-label').textContent = sig.state_label || '—';
+    $('signal-meta').textContent = sig.confidence_label ? ('置信度 ' + sig.confidence_label) : '';
+    var kpis = [
+      ['当日净申购', last ? num(last.net_subscription_yi) : null, '亿'],
+      ['近3日', sumLast(items, 3), '亿'],
+      ['近5日', sumLast(items, 5), '亿'],
+      ['指数', last ? num(last.index_change_pct) : null, '%']
+    ];
+    $('kpis').innerHTML = kpis.map(function(k){
+      return '<div class="kpi"><div class="k">' + esc(k[0]) + '</div>'
+        + '<div class="v ' + cls(k[1]) + '">' + fmt(k[1]) + '<span style="font-size:13px;font-weight:500"> ' + k[2] + '</span></div></div>';
+    }).join('');
+    var cond = sig.conditions || {};
+    var order = ['market_drop', 'etf_sync', 'official'];
+    $('checks').innerHTML = order.map(function(key){
+      var c = cond[key];
+      if (!c) return '';
+      var on = c.met === true;
+      return '<div class="check' + (on ? ' on' : '') + '"><i class="mark"></i>'
+        + esc(c.label || key) + '</div>';
+    }).join('');
+    draw(items);
+    var etfs = (momentum && momentum.items) || [];
+    if (momentum && momentum.date) $('etf-title').textContent = '宽基 ETF · ' + momentum.date;
+    $('etf').innerHTML = table(
+      [{t:'代码'},{t:'名称'},{t:'净申购(亿)',num:1},{t:'成交额(亿)',num:1},{t:'放量',num:1}],
+      etfs.map(function(it){
+        var ch = num(it.share_change_yi);
+        return '<tr><td>' + esc(it.code) + '</td><td>' + esc(it.name) + '</td>'
+          + '<td class="num ' + cls(ch) + '">' + fmt(ch) + '</td>'
+          + '<td class="num">' + (num(it.amount_yi) == null ? '—' : Number(it.amount_yi).toFixed(1)) + '</td>'
+          + '<td class="num">' + (num(it.volume_multiple) == null ? '—' : Number(it.volume_multiple).toFixed(2)) + '</td></tr>';
+      }).join('') || '<tr><td colspan="5">无数据</td></tr>'
+    );
+    var aItems = (anns && anns.items) || [];
+    if (aItems.length){
+      $('ann-panel').hidden = false;
+      $('anns').innerHTML = table(
+        [{t:'日期'},{t:'来源'},{t:'标题'}],
+        aItems.map(function(it){
+          return '<tr><td>' + esc(it.date) + '</td><td>' + esc(it.source) + '</td><td>' + esc(it.title) + '</td></tr>';
+        }).join('')
+      );
     }
-    var chart = initChart(boxId);
-    if(!chart){ showChartEmpty(boxId, '图表初始化失败，请刷新重试。'); return; }
-    if(!items.length){
-      chart.setOption(emptyChartOption('暂无数据 · 无法连接后端接口'), true);
-      return;
+    var hItems = (holds && holds.items) || [];
+    if (hItems.length){
+      $('hold-panel').hidden = false;
+      $('holds').innerHTML = table(
+        [{t:'代码'},{t:'名称'},{t:'主体'},{t:'报告期'},{t:'披露日'},{t:'持股',num:1}],
+        hItems.map(function(it){
+          return '<tr><td>' + esc(it.code) + '</td><td>' + esc(it.name) + '</td><td>' + esc(it.entity) + '</td>'
+            + '<td>' + esc(it.report_period) + '</td><td>' + esc(it.disclose_date) + '</td>'
+            + '<td class="num">' + (it.shares == null ? '—' : Number(it.shares).toLocaleString('zh-CN')) + '</td></tr>';
+        }).join('')
+      );
     }
-
-    var dates = items.map(function(d){ return fmtMD(d.date); });
-    var netVals = items.map(function(d){ return Number(d.net_subscription_yi)||0; });
-    var closeVals = items.map(function(d){ return Number(d.index_close)||0; });
-    var bars = netVals.map(function(v){
-      return { value:v, itemStyle:{ color:(v>=0 ? UP : DOWN), borderRadius:(v>=0 ? [3,3,0,0] : [0,0,3,3]) } };
-    });
-
+    $('foot').textContent = overview.disclaimer || '';
+  }
+  function draw(items){
+    var box = $('chart');
+    if (!window.echarts){ box.textContent = '图表未加载'; return; }
+    var chart = echarts.init(box);
+    var dates = items.map(function(d){ return d.date; });
     chart.setOption({
       backgroundColor:'transparent',
-      animationDuration:500,
-      grid:{ left:64, right:72, top:46, bottom:64 },
-      legend:{ top:4, textStyle:{ color:'#475569', fontSize:11 },
-        data:['估算净申购额（亿元）','指数收盘点位'] },
-      tooltip:{
-        trigger:'axis', axisPointer:{ type:'shadow' },
-        backgroundColor:'rgba(255,255,255,.97)', borderColor:'#e2e8f0', borderWidth:1,
-        textStyle:{ color:'#1e293b', fontSize:12 },
-        formatter:function(ps){
-          var i = (ps && ps[0]) ? ps[0].dataIndex : 0;
-          var d = items[i] || {};
-          var net = Number(d.net_subscription_yi)||0, chg = Number(d.index_change_pct)||0;
-          return '<div style="font-size:12px;line-height:1.75;min-width:200px">'
-            + '<div style="font-weight:700;margin-bottom:4px">' + h(d.date) + '</div>'
-            + '<div>估算净申购额：<b style="color:' + (net>=0?UP:DOWN) + '">' + h(fmtYi(net,true)) + '</b></div>'
-            + '<div>指数收盘点位：' + h(fmtNum(d.index_close)) + ' 点</div>'
-            + '<div>指数涨跌：<b style="color:' + (chg>=0?UP:DOWN) + '">' + h(fmtPct(chg,true)) + '</b></div>'
-            + '<div>同步净申购 ETF：' + h(d.sync_etf_count) + ' 只</div>'
-            + '<div style="margin-top:6px;color:#c2410c;font-size:11px">估算 · 不可归因 ｜ ' + h(d.note || 'L2 估算，不可归因') + '</div>'
-            + '</div>';
-        }
-      },
-      xAxis:{
-        type:'category', data:dates,
-        axisLine:{ lineStyle:{ color:'#cbd5e1' } },
-        axisTick:{ show:false },
-        axisLabel:{ color:'#64748b', fontSize:10, rotate:40, interval:'auto' }
-      },
+      grid:{left:48,right:56,top:28,bottom:28},
+      tooltip:{trigger:'axis'},
+      legend:{data:['净申购','沪深300'],textStyle:{color:'#8b95a8'},top:0},
+      xAxis:{type:'category',data:dates,axisLabel:{color:'#8b95a8'},axisLine:{lineStyle:{color:'#2a3140'}}},
       yAxis:[
-        { type:'value', name:'净申购额（亿元）',
-          nameTextStyle:{ color:'#64748b', fontSize:11, padding:[0,0,0,30] },
-          axisLabel:{ color:'#64748b', fontSize:10 },
-          splitLine:{ lineStyle:{ color:'#eef2f7' } } },
-        { type:'value', name:'指数收盘（点）', scale:true,
-          nameTextStyle:{ color:'#64748b', fontSize:11 },
-          axisLabel:{ color:'#64748b', fontSize:10 },
-          splitLine:{ show:false } }
+        {type:'value',name:'亿',nameTextStyle:{color:'#8b95a8'},axisLabel:{color:'#8b95a8'},splitLine:{lineStyle:{color:'#2a3140'}}},
+        {type:'value',name:'点',nameTextStyle:{color:'#8b95a8'},axisLabel:{color:'#8b95a8'},splitLine:{show:false}}
       ],
       series:[
-        { name:'估算净申购额（亿元）', type:'bar', yAxisIndex:0, data:bars,
-          barMaxWidth:18, itemStyle:{ color:UP },
-          emphasis:{ focus:'series' } },
-        { name:'指数收盘点位', type:'line', yAxisIndex:1, data:closeVals,
-          smooth:true, symbol:'circle', symbolSize:5, showSymbol:false,
-          lineStyle:{ color:'#2563eb', width:2 }, itemStyle:{ color:'#2563eb' },
-          emphasis:{ focus:'series' } }
+        {name:'净申购',type:'bar',data:items.map(function(d){
+          var v = num(d.net_subscription_yi) || 0;
+          return {value:v,itemStyle:{color:v >= 0 ? '#e54545' : '#1aa36a'}};
+        })},
+        {name:'沪深300',type:'line',yAxisIndex:1,showSymbol:false,data:items.map(function(d){ return d.index_close; }),
+          lineStyle:{color:'#d7dde8',width:1.5}}
       ]
-    }, true);
-  }
-
-  /* ============ 图2：近 90 日信号状态分布（时间轴散点） ============ */
-  function renderSignalsChart(res){
-    var boxId = 'chart-signals';
-    var p = payload(res);
-    var items = p ? arr(p.items).slice() : [];
-    items.sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); });
-
-    if(!chartReady()){
-      showChartEmpty(boxId, '图表组件未加载（离线环境或 CDN 不可达）。\n联网后通过本项目后端服务访问即可查看；当前不展示任何数值。');
-      return;
-    }
-    var chart = initChart(boxId);
-    if(!chart){ showChartEmpty(boxId, '图表初始化失败，请刷新重试。'); return; }
-    if(!items.length){
-      chart.setOption(emptyChartOption('暂无数据 · 无法连接后端接口'), true);
-      return;
-    }
-
-    var maxDate = String(items[items.length-1].date || '').slice(0,10);
-    function dayShift(dateStr, delta){
-      var t = Date.parse(dateStr + 'T00:00:00Z');
-      if(isNaN(t)) t = Date.now();
-      return new Date(t + delta*86400000).toISOString().slice(0,10);
-    }
-    var minDate = dayShift(maxDate, -90);
-    var maxAxis = dayShift(maxDate, 16); // 右侧留白，供政策底竖线标注水平显示
-
-    var scatter = items.map(function(d){
-      var m = STATE_META[d.state] || STATE_META.NO_SIGNAL;
-      var c = d.confidence;
-      var size = (c==='high') ? 18 : (c==='medium' ? 14 : 11);
-      return { value:[ String(d.date||'').slice(0,10), m.y, c, d.state, d.is_confirmed ],
-        itemStyle:{ color:m.color, opacity:.9, borderColor:'#fff', borderWidth:1 },
-        symbolSize:size };
     });
-    var policyDates = items.filter(function(d){ return d.state === 'POLICY_BOTTOM_PROBABLE'; })
-                           .map(function(d){ return String(d.date||'').slice(0,10); }).sort();
-
-    var series = [{
-      name:'信号状态', type:'scatter', data:scatter,
-      emphasis:{ scale:1.3 },
-      markLine: policyDates.length ? {
-        symbol:['none','none'], silent:true,
-        label:{
-          show:true, formatter:'政策底信号出现（推断）',
-          position:'insideEndTop', rotate:0, align:'right',
-          color:'#b45309', fontSize:10,
-          backgroundColor:'rgba(255,251,235,.94)', padding:[3,5], borderRadius:3
-        },
-        lineStyle:{ color:'#f59e0b', type:'dashed', width:1.5 },
-        data:[{ xAxis:policyDates[0] }]
-      } : undefined
-    }];
-
-    chart.setOption({
-      backgroundColor:'transparent',
-      animationDuration:500,
-      grid:{ left:156, right:28, top:26, bottom:52 },
-      tooltip:{
-        trigger:'item',
-        backgroundColor:'rgba(255,255,255,.97)', borderColor:'#e2e8f0', borderWidth:1,
-        textStyle:{ color:'#1e293b', fontSize:12 },
-        formatter:function(pa){
-          var v = (pa && pa.data && pa.data.value) ? pa.data.value : [];
-          var m = STATE_META[v[3]] || { label:'未标注状态' };
-          return '<div style="font-size:12px;line-height:1.75;min-width:200px">'
-            + '<div style="font-weight:700;margin-bottom:4px">' + h(v[0]) + '</div>'
-            + '<div>状态：' + h(m.label) + '</div>'
-            + '<div>置信度：' + h(confLabel(v[2])) + '</div>'
-            + '<div style="margin-top:6px;color:#9a3412;font-size:11px">推断，非实锤 · 无法确认买方身份 · 不可确权（确权标记恒为否）</div>'
-            + '</div>';
-        }
-      },
-      xAxis:{
-        type:'time', min:minDate, max:maxAxis,
-        axisLine:{ lineStyle:{ color:'#cbd5e1' } }, axisTick:{ show:false },
-        axisLabel:{ color:'#64748b', fontSize:10, formatter:'{MM}-{dd}' },
-        splitLine:{ show:false }
-      },
-      yAxis:{
-        type:'category',
-        data:['无信号','仅有增量资金承接','仅有公告','政策底信号（推断）'],
-        axisLine:{ show:false }, axisTick:{ show:false },
-        axisLabel:{ color:'#475569', fontSize:11, margin:12 },
-        splitLine:{ show:true, lineStyle:{ color:'#eef2f7' } }
-      },
-      series:series
-    }, true);
+    window.addEventListener('resize', function(){ chart.resize(); });
   }
-
-  /* ============ 渲染：信号状态卡片 ============ */
-  function renderSignal(overviewRes){
-    var p = payload(overviewRes);
-    var s = p && p.signal ? p.signal : null;
-    var main = $('signal-main'), side = $('signal-side');
-    if(!s){
-      main.innerHTML = '<div class="chart-empty" style="min-height:150px">信号数据暂不可用 · 无法连接后端接口<br>当前不输出任何信号判断</div>';
-      side.innerHTML = '<div class="muted">共振条件数据暂不可用。</div>';
-      return;
-    }
-    var conds = s.conditions || {};
-    var conf = s.confidence;
-
-    main.innerHTML =
-      '<div class="muted">信号日期 ' + h(s.date) + ' ｜ 状态枚举 ' + h(s.state) + '</div>'
-      + '<div class="signal-title">' + h(s.state_label || s.state) + '</div>'
-      + '<div class="conf-row">'
-        + '<span class="k">置信度</span><span class="badge ' + confClass(conf) + '">' + h(s.confidence_label || confLabel(conf)) + '</span>'
-        + '<span class="tag tag-est">推断 · 非实锤</span>'
-        + '<span class="tag tag-neutral">无法确认买方身份</span>'
-      + '</div>'
-      + '<div class="signal-warn">本信号为基于公开数据的概率推断，非实锤；无法归因到具体主体，确权标记恒为「否」，无法确认买方身份。不构成投资建议。</div>'
-      + '<div class="signal-text">'
-        + '<p><span class="lbl">归因说明：</span>' + h(s.attribution || '无法归因到具体主体') + '</p>'
-        + '<p><span class="lbl">信号说明：</span>' + h(s.summary || '暂无说明') + '</p>'
-        + '<p><span class="lbl">局限说明：</span>' + h(s.caveat || '暂无说明') + '</p>'
-      + '</div>';
-
-    var chips = COND_ORDER.map(function(c){
-      var it = conds[c.key] || {};
-      var met = it.met === true;
-      return '<div class="chip ' + (met ? 'met' : 'unmet') + '">'
-        + '<span class="box">' + (met ? '✓' : '○') + '</span>'
-        + '<span>' + h(it.label || c.key) + '</span>'
-        + '<span class="state">' + (met ? '满足' : '未满足') + '</span>'
-      + '</div>';
-    }).join('');
-    side.innerHTML =
-      '<h3>三重共振条件（逐项勾选）</h3>'
-      + '<div class="muted">三条件需同时满足，缺任一即降级表述</div>'
-      + '<div class="cond-chips">' + chips + '</div>'
-      + '<div class="caveat">条件②基于 <span class="tag tag-est">估算 · 不可归因</span> 的 L2 份额数据，仅代表全市场一级市场净申购。</div>';
-  }
-
-  /* ============ 渲染：三层数据可信度 ============ */
-  function renderLayers(overviewRes){
-    var p = payload(overviewRes);
-    var layers = (p && arr(p.layers).length) ? arr(p.layers) : FALLBACK_LAYERS;
-    var offline = !p;
-    $('layers-grid').innerHTML = layers.map(function(L){
-      var lv = String(L.layer || '').toLowerCase();
-      var cls = (lv==='l1'||lv==='l2'||lv==='l3') ? lv : 'l1';
-      var tagCls = 'tag-' + cls;
-      var attrTxt = L.attributable ? '可归因（季度披露口径）' : '不可归因';
-      var extra = (lv==='l2') ? ' <span class="tag tag-est">估算 · 不可归因</span>' : '';
-      return '<div class="card layer-card ' + cls + '">'
-        + '<div class="layer-top">'
-          + '<span class="layer-id">' + h(L.layer) + '</span>'
-          + '<span class="layer-name">' + h(L.name) + '</span>'
-          + '<span class="tag ' + tagCls + '" style="margin-left:auto">' + h(L.layer) + '</span>'
-        + '</div>'
-        + '<div class="kv">'
-          + '<div class="kv-row"><span class="kv-k">时效</span><span class="kv-v">' + h(L.timeliness) + '</span></div>'
-          + '<div class="kv-row"><span class="kv-k">是否可归因</span><span class="kv-v">' + h(attrTxt) + extra + '</span></div>'
-          + '<div class="kv-row"><span class="kv-k">置信度</span><span class="kv-v"><span class="badge ' + confClass(L.confidence) + '">' + h(confLabel(L.confidence)) + '</span></span></div>'
-        + '</div>'
-        + '<div class="src"><b>典型来源：</b>' + h(L.sources) + '</div>'
-        + (offline ? '<div class="muted" style="margin-top:8px">（接口不可用，以上为方法论静态说明，非实时数据）</div>' : '')
-      + '</div>';
-    }).join('');
-
-    var g = $('glossary-box');
-    g.innerHTML = '<div class="g-title">术语口径</div><div class="muted">正在加载术语说明…</div>';
-  }
-
-  /* ============ 渲染：方法论（术语 / 噪音 / 口径陷阱） ============ */
-  /* ============ 渲染：7 只宽基 ETF 标的池 ============ */
-  var FALLBACK_POOL = [
-    {code:'510050',name:'上证50ETF华夏',manager:'华夏基金',index_name:'上证50指数',board:'大盘蓝筹',track_logic:'大盘蓝筹核心标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
-    {code:'510300',name:'沪深300ETF华泰柏瑞',manager:'华泰柏瑞基金',index_name:'沪深300指数',board:'全市场核心宽基',track_logic:'全市场核心宽基',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
-    {code:'510500',name:'中证500ETF南方',manager:'南方基金',index_name:'中证500指数',board:'中盘成长',track_logic:'中盘成长标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
-    {code:'512100',name:'中证1000ETF南方',manager:'南方基金',index_name:'中证1000指数',board:'小盘成长',track_logic:'小盘成长标的',is_2026_focus:false,is_alternative:false,exchange:'上交所'},
-    {code:'159845',name:'中证1000ETF华夏',manager:'华夏基金',index_name:'中证1000指数',board:'小盘成长',track_logic:'中证1000 备选标的，补充流动性',is_2026_focus:false,is_alternative:true,exchange:'深交所'},
-    {code:'588000',name:'科创50ETF华夏',manager:'华夏基金',index_name:'科创50指数',board:'科技成长',track_logic:'科技成长核心标的',is_2026_focus:true,is_alternative:false,exchange:'上交所'},
-    {code:'159915',name:'创业板ETF易方达',manager:'易方达基金',index_name:'创业板指数',board:'科技成长',track_logic:'创业板核心标的',is_2026_focus:true,is_alternative:false,exchange:'深交所'}
-  ];
-  var FALLBACK_CLAIMS = [
-    {text:'持仓占比 20–40% / 2026 布局重心转向科创50与创业板',verified:false,reason:'属方向性判断，仅 L1 季度前十大持有人可确权，无日频公开口径可核实'},
-    {text:'放量 2 倍视为国家队加仓信号',verified:false,reason:'成交额放量不改变总份额、无法识别买方身份；列入噪音屏蔽'}
-  ];
-  function renderEtfPool(res){
-    var p = payload(res);
-    var items = (p && arr(p.items).length) ? arr(p.items) : FALLBACK_POOL;
-    var claims = (p && arr(p.claims).length) ? arr(p.claims) : FALLBACK_CLAIMS;
-    var offline = !p;
-    var rows = items.map(function(it){
-      var marks = '';
-      if(it.is_2026_focus) marks += ' <span class="tag tag-focus">2026 重点观察</span>';
-      if(it.is_alternative) marks += ' <span class="tag tag-alt">备选标的</span>';
-      return '<tr>'
-        + '<td class="nowrap num"><b>' + h(it.code) + '</b></td>'
-        + '<td class="nowrap">' + h(it.name) + marks + '</td>'
-        + '<td class="nowrap">' + h(it.manager) + '</td>'
-        + '<td class="nowrap">' + h(it.index_name) + '</td>'
-        + '<td class="nowrap">' + h(it.board) + '</td>'
-        + '<td class="nowrap muted">' + h(it.exchange || '') + '</td>'
-        + '<td>' + h(it.track_logic) + (it.note ? '<br><span class="muted">' + h(it.note) + '</span>' : '') + '</td>'
-      + '</tr>';
-    }).join('');
-    $('etf-pool-box').innerHTML = tableShell(
-      ['代码','名称','管理人','跟踪指数','板块方向','交易所','核心跟踪逻辑'], rows);
-
-    $('etf-claims-box').innerHTML =
-      '<div class="claim-title">未经确权的参考观点（不作为事实、不参与信号）</div>'
-      + claims.map(function(c){
-          return '<div class="claim-item">· ' + h(c.text)
-            + ' <span class="tag tag-l2">未确权</span>'
-            + (c.reason ? '<br><span class="muted">理由：' + h(c.reason) + '</span>' : '')
-            + '</div>';
-        }).join('')
-      + (offline ? '<div class="claim-item muted">（接口不可用，展示静态说明）</div>' : '');
-
-    var v = p ? arr(p.validation) : [];
-    $('pool-validation').textContent = v.length
-      ? '标的池校验：' + v.join('；')
-      : (offline ? '标的池校验：离线，未校验' : '标的池校验：通过（7 只、代码唯一、市场匹配）');
-  }
-
-  /* ============ 渲染：量能异动观察 ============ */
-  function renderMomentum(res){
-    var p = payload(res);
-    var summary = p && p.summary ? p.summary : null;
-    var items = p ? arr(p.items) : [];
-    var smBox = $('momentum-summary');
-    if(summary){
-      smBox.innerHTML = '<b>观测结论（非信号）：</b>' + h(summary.observation)
-        + '<br><span class="muted">数据日期 ' + h(summary.date || p.date || '')
-        + ' · 放量阈值 ' + h(summary.threshold) + ' 倍 · is_signal='
-        + (summary.is_signal === true ? 'true' : 'false') + '（量能观测恒非信号）</span>';
-    } else {
-      smBox.innerHTML = '<b>无法连接后端接口</b> · 量能数据暂不可用，不展示任何数值，也不作任何判断。';
-    }
-    var head = ['代码','名称','成交额(亿)','前一日(亿)','5日均额(亿)','环比增量(亿)','环比','放量倍数','份额变化(亿)','量能状态'];
-    var rows = items.map(function(it){
-      var spike = it.is_spike === true;
-      var chg = Number(it.amount_change_pct) || 0;
-      var chgColor = chg >= 0 ? 'var(--up)' : 'var(--down)';
-      return '<tr>'
-        + '<td class="nowrap num"><b>' + h(it.code) + '</b>' + (it.is_2026_focus ? ' <span class="tag tag-focus">重点</span>' : '') + '</td>'
-        + '<td class="nowrap">' + h(it.name) + '</td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.amount_yi)) + '</td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.amount_prev_yi)) + '</td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.amount_ma_yi)) + '</td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.amount_change_yi)) + '</td>'
-        + '<td class="nowrap num right" style="color:' + chgColor + '">' + (chg>=0?'+':'') + h(chg) + '%</td>'
-        + '<td class="nowrap num right"><b>' + h(fmtNum(it.volume_multiple)) + '</b></td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.share_change_yi)) + '</td>'
-        + '<td class="nowrap"><span class="momentum-flag ' + (spike?'flag-spike':'flag-normal') + '">'
-          + (spike ? '放量达标' : '平稳') + '</span></td>'
-      + '</tr>';
-    }).join('');
-    $('momentum-box').innerHTML = tableShell(head,
-      rows || '<tr class="empty-row"><td colspan="10">暂无数据 · 无法连接后端接口</td></tr>');
-    $('momentum-caveat').innerHTML =
-      '<div class="claim-title">口径说明</div>'
-      + '<div class="claim-item">' + h((p && p.caveat) ? p.caveat : '成交额放量不改变 ETF 总份额、无法识别买方身份；放量 2 倍不等于国家队加仓。')
-      + '</div>'
-      + '<div class="claim-item muted">「份额变化」为 L2 估算（份额增量 × 净值），仅代表全市场一级市场净申购、不可归因；与成交额分列对照，用于识别「放量但份额未增」。</div>';
-  }
-
-  /* ============ 渲染：参考策略取舍 ============ */
-  var DISPOSITION_CLASS = { '已实现':'tag-adopted', '保留为参考':'tag-kept', '不实现（合规）':'tag-rejected' };
-  function renderStrategy(res){
-    var p = payload(res);
-    if(p && p.statement){ $('strategy-statement').textContent = p.statement; }
-    var counts = p && p.disposition_counts ? p.disposition_counts : null;
-    $('strategy-counts').innerHTML = counts
-      ? ['已实现','保留为参考','不实现（合规）'].map(function(k){
-          return '<span class="tag ' + (DISPOSITION_CLASS[k]||'tag-neutral') + '">'
-            + h(k) + ' ' + h(counts[k] || 0) + ' 项</span>';
-        }).join('')
-      : '<span class="tag tag-neutral">接口不可用，展示静态说明</span>';
-    var items = p ? arr(p.items) : [];
-    if(!items.length){
-      $('strategy-box').innerHTML = '<div class="strat-item"><div class="st-orig">参考策略明细需连接后端接口加载；离线状态下不作任何策略判断。系统不提供买卖、仓位或择时指令。</div></div>';
-      return;
-    }
-    $('strategy-box').innerHTML = items.map(function(it){
-      var cls = DISPOSITION_CLASS[it.disposition] || 'tag-neutral';
-      return '<div class="strat-item">'
-        + '<div class="st-head"><span class="st-title">' + h(it.section) + ' · ' + h(it.title) + '</span>'
-          + '<span class="tag ' + cls + '">' + h(it.disposition) + '</span></div>'
-        + '<div class="st-orig">原文：' + h(it.original) + '</div>'
-        + '<div class="st-reason"><b>理由：</b>' + h(it.reason)
-          + (it.implementation ? '<br><b>对应实现：</b>' + h(it.implementation) : '') + '</div>'
-      + '</div>';
-    }).join('');
-  }
-
-  function renderMethodology(res){
-    var p = payload(res);
-
-    // 术语口径
-    var gl = (p && arr(p.glossary).length) ? arr(p.glossary) : FALLBACK_GLOSSARY;
-    $('glossary-box').innerHTML =
-      '<div class="g-title">术语口径' + (p ? '' : '（接口不可用，静态说明）') + '</div>'
-      + gl.map(function(x){
-          return '<div class="glossary-item"><b>' + h(x.term) + '：</b>' + h(x.definition) + '</div>';
-        }).join('');
-
-    // 噪音屏蔽清单：静态 5 条为准，合并接口 noise 去重
-    var apiNoise = p ? arr(p.noise).map(String) : [];
-    var seen = {};
-    NOISE_ITEMS.forEach(function(x){ seen[x.t] = true; });
-    var extra = apiNoise.filter(function(t){ return !seen[t]; });
-    var listHtml = NOISE_ITEMS.map(noiseHtml).join('') + extra.map(function(t){
-      return noiseHtml({ t:t, d:'非本看板判据，予以屏蔽。' });
-    }).join('');
-    $('noise-box').innerHTML =
-      '<div class="noise-grid">' + listHtml + '</div>'
-      + '<div class="noise-foot">以上口径与说法均无法复核或无法归因到具体主体，本看板一律屏蔽，不纳入任何信号判断。所有输出均标注置信度并明确「推断，非实锤」。</div>';
-
-    // 口径陷阱（L1 持仓区）
-    var traps = (p && arr(p.traps).length) ? arr(p.traps) : FALLBACK_TRAPS;
-    $('holdings-notice').innerHTML =
-      '<b>口径提示：名单进出 ≠ 增减持</b>'
-      + '<ul class="trap-list">'
-      + traps.map(function(t){ return '<li>' + h(t) + '</li>'; }).join('')
-      + '</ul>';
-  }
-  function noiseHtml(x){
-    return '<div class="noise-item">'
-      + '<span class="noise-x">×</span>'
-      + '<div><div class="noise-title">' + h(x.t) + '</div><div class="noise-desc">' + h(x.d) + '</div></div>'
-    + '</div>';
-  }
-
-  /* ============ 渲染：三重共振条件检查表 ============ */
-  function renderConditions(overviewRes){
-    var p = payload(overviewRes);
-    var s = p && p.signal ? p.signal : null;
-    var box = $('conditions-box');
-    if(!s || !s.conditions){
-      box.innerHTML =
-        '<div class="chart-empty" style="min-height:120px">条件数据暂不可用 · 无法连接后端接口</div>'
-        + '<div class="conclusion warn"><b>规则说明（当前无数据，不作判断）：</b>三重共振需三条件同时满足；缺任一条件时，仅为「有大额增量资金承接」，不标记为「国家队进场」。所有判断均为推断，非实锤，无法确认买方身份。</div>';
-      return;
-    }
-    var conds = s.conditions;
-    var allMet = COND_ORDER.every(function(c){ return conds[c.key] && conds[c.key].met === true; });
-    var rows = COND_ORDER.map(function(c){
-      var it = conds[c.key] || {};
-      var met = it.met === true;
-      var l2 = (c.key === 'etf_sync') ? ' <span class="tag tag-est">估算 · 不可归因</span>' : '';
-      return '<div class="cond-row">'
-        + '<span class="cond-no">' + c.no + '</span>'
-        + '<span class="cond-label">' + h(it.label || c.key) + l2 + '</span>'
-        + '<span class="cond-state"><span class="pill ' + (met ? 'pill-blue' : 'pill-gray') + '">' + (met ? '满足' : '未满足') + '</span></span>'
-        + '<span class="cond-detail">' + h(it.detail || '暂无实测值') + '</span>'
-      + '</div>';
-    }).join('');
-
-    var conclusion;
-    if(allMet){
-      conclusion = '<div class="conclusion ok">三重共振条件同时满足，状态为「' + h(s.state_label || s.state)
-        + '」；但这仍是<b>推断，非实锤</b>：无法确认买方身份，无法归因到具体主体，确权标记恒为「否」。'
-        + '不提供任何个股操作建议，仅输出托底信号状态。</div>';
-    } else {
-      conclusion = '<div class="conclusion warn">缺任一条件，<b>仅为「有大额增量资金承接」，不标记为「国家队进场」</b>。'
-        + '该表述同样为推断，非实锤，无法确认买方身份。</div>';
-    }
-    box.innerHTML =
-      '<div class="cond-table">' + rows + '</div>'
-      + conclusion
-      + '<div class="caveat">' + h(s.caveat || '') + '</div>';
-  }
-
-  /* ============ 渲染：官方公告（L3） ============ */
-  function renderAnnouncements(res){
-    var p = payload(res);
-    var items = p ? arr(p.items) : [];
-    var box = $('announcements-box');
-    if(!items.length){
-      box.innerHTML = tableShell(['日期','来源','公告标题','类型','属性'],
-        '<tr class="empty-row"><td colspan="5">暂无数据 · 无法连接后端接口</td></tr>');
-      return;
-    }
-    var rows = items.map(function(it){
-      var u = safeUrl(it.url);
-      var title = u
-        ? '<a href="' + h(u) + '" target="_blank" rel="noopener noreferrer">' + h(it.title) + '</a>'
-        : h(it.title);
-      var supportive = it.is_supportive === true;
-      return '<tr>'
-        + '<td class="nowrap num">' + h(it.date) + '</td>'
-        + '<td class="nowrap">' + h(it.source) + '</td>'
-        + '<td>' + title + '</td>'
-        + '<td class="nowrap">' + h(it.type) + '</td>'
-        + '<td class="nowrap"><span class="pill ' + (supportive ? 'pill-amber' : 'pill-gray') + '">'
-          + (supportive ? '增持 / 支持类' : '其他') + '</span></td>'
-      + '</tr>';
-    }).join('');
-    box.innerHTML = tableShell(['日期','来源','公告标题','类型','属性'], rows);
-  }
-
-  /* ============ 渲染：季度持仓确权（L1） ============ */
-  function renderHoldings(res){
-    var p = payload(res);
-    var items = p ? arr(p.items) : [];
-    var box = $('holdings-box');
-    if(!items.length){
-      box.innerHTML = tableShell(['代码','名称','披露主体','报告期','披露日 / 生效日','持股数','占流通','名单口径','进出','备注'],
-        '<tr class="empty-row"><td colspan="10">暂无数据 · 无法连接后端接口</td></tr>');
-      return;
-    }
-    var rows = items.map(function(it){
-      var ee = String(it.entry_exit || '');
-      var passive = it.passive_change === true;
-      return '<tr>'
-        + '<td class="nowrap num">' + h(it.code) + '</td>'
-        + '<td class="nowrap">' + h(it.name) + '</td>'
-        + '<td class="nowrap">' + h(it.entity) + '</td>'
-        + '<td class="nowrap num">' + h(it.report_period) + '</td>'
-        + '<td class="nowrap num">' + h(it.disclose_date) + '<br><span class="muted">' + h(it.effective_date) + '</span></td>'
-        + '<td class="nowrap num right">' + h(fmtShares(it.shares)) + '</td>'
-        + '<td class="nowrap num right">' + h(fmtNum(it.float_pct)) + '%</td>'
-        + '<td class="nowrap">' + h(it.list_type) + '</td>'
-        + '<td class="nowrap"><span class="pill ' + (ee==='不变' ? 'pill-gray' : 'pill-blue') + '">' + h(ee) + '</span>'
-          + (passive ? '<br><span class="muted">被动变动</span>' : '') + '</td>'
-        + '<td>' + h(it.note || '名单进出≠增减持') + '</td>'
-      + '</tr>';
-    }).join('');
-    box.innerHTML = tableShell(['代码','名称','披露主体','报告期','披露日 / 生效日','持股数','占流通','名单口径','进出','备注'], rows);
-  }
-  function tableShell(headers, bodyRows){
-    return '<table class="tbl"><thead><tr>'
-      + headers.map(function(x){ return '<th>' + h(x) + '</th>'; }).join('')
-      + '</tr></thead><tbody>' + bodyRows + '</tbody></table>';
-  }
-
-  /* ============ 渲染：数据源接入状态 ============ */
-  function renderDataSource(res){
-    var box = $('datasource-box'); if(!box) return;
-    var p = payload(res);
-    if(!p){ box.innerHTML = '<span class="muted">数据源状态不可用</span>'; return; }
-    var cls = p.mode === 'demo' ? 'ds-demo' : (p.mode === 'live' ? 'ds-live' : 'ds-snap');
-    var html = '<div class="ds-top">' +
-      '<span class="ds-badge ' + cls + '">' + h(p.mode_label) + '</span>' +
-      '<span class="ds-src">数据集来源：' + h(p.dataset_source || 'unknown') + '</span>' +
-      '<span class="ds-src">基准日：' + h(p.dataset_as_of || '—') + '</span>' +
-      '<span class="ds-src">份额数据最新日期：' + h(p.data_latest_date || '—') + '</span>' +
-      '<span class="ds-src">刷新：每交易日盘后自动 + 手动即时</span>' +
-      '<span class="ds-src">凭据已配置：' + (p.credential_configured ? '是' : '否') +
-      ' · 端点已配置：' + (p.endpoint_configured ? '是' : '否') + '</span>' +
-      '</div>';
-    html += '<div class="ds-grid">';
-    (p.layers || []).forEach(function(L){
-      html += '<div class="ds-layer">' +
-        '<div class="ds-layer-h"><b>' + h(L.layer) + '</b>' +
-        (L.connected ? '<span class="ds-ok">已接入</span>' : '<span class="ds-off">未接入</span>') +
-        '</div>' +
-        '<div class="ds-note">' + h(L.note) + '</div>' +
-        '<div class="ds-fields">当前记录数：' + (L.records || 0) + '</div>' +
-        '<div class="ds-fields">必需字段：' + h((L.required_fields || []).join(' / ')) + '</div>' +
-        '<div class="ds-fields">可归因到主体：' + (L.attributable ? '是（L1 季度确权）' : '否') + '</div>' +
-        '</div>';
+  var urls = ['/api/overview','/api/etf/shares?days=30','/api/etf/momentum','/api/datasource','/api/announcements?limit=8','/api/holdings?limit=12'];
+  Promise.all(urls.map(function(u){
+    return fetch(u, {cache:'no-store'}).then(function(r){
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
     });
-    html += '</div>';
-    html += '<div class="ds-sec"><b>接入缺口与前置条件</b><ul>';
-    (p.gaps || []).forEach(function(g){ html += '<li>' + h(g) + '</li>'; });
-    html += '</ul></div>';
-    var w = p.wind_alice_review || {};
-    html += '<div class="ds-sec"><b>关于「Wind Alice Market」推文的核查结论</b>' +
-      '<div class="ds-note">' + h(w.verdict || '') + '</div>' +
-      '<div class="ds-fields">推文性质：' + h(w.what_it_is || '') +
-      ' · 凭据：' + h(w.credential || '') + '</div><ul>';
-    (w.gaps_for_this_platform || []).forEach(function(g){ html += '<li>' + h(g) + '</li>'; });
-    html += '</ul></div>';
-    var m = p.wind_mcp || {};
-    if (m.status){
-      html += '<div class="ds-sec"><b>Wind MCP 接入实况</b>' +
-        '<div class="ds-note">' + h(m.status) + ' · 核验日期 ' + h(m.verified_at || '') + '</div>' +
-        '<div class="ds-fields">协议：' + h(m.protocol || '') + '</div>' +
-        '<div class="ds-fields">L2 字段：' + h(m.l2_field || '') + '</div><ul>';
-      var tools = m.tools || {};
-      Object.keys(tools).forEach(function(k){ html += '<li>' + h(k) + '：' + h(tools[k]) + '</li>'; });
-      html += '<li>' + h(m.l1_gap || '') + '</li>' +
-              '<li>' + h(m.l3_policy || '') + '</li>' +
-              '<li>' + h(m.refresh || '') + '</li>' +
-              '<li>' + h(m.note || '') + '</li></ul></div>';
-    }
-    html += '<div class="ds-sec"><b>铁律（接入真实数据后依然成立）</b><ul>';
-    (p.iron_rules || []).forEach(function(r){ html += '<li>' + h(r) + '</li>'; });
-    html += '</ul><div class="ds-note">' + h(p.attribution_note || '') + '</div></div>';
-    box.innerHTML = html;
-  }
-
-  /* ============ 渲染：页头 / 连接状态 / 页脚 ============ */
-  function renderHeaderAndFooter(R){
-    var ov = payload(R.overview);
-    var hp = payload(R.health);
-    var online = !!(ov || hp);
-
-    var isDemo = ov ? ov.is_demo : (hp ? hp.is_demo : true);
-    var live = (isDemo === false);
-    var dsp = payload(R.datasource);
-    var latest = (dsp && dsp.data_latest_date) ? dsp.data_latest_date
-               : (ov && ov.as_of ? ov.as_of : '');
-    $('as-of').textContent = latest
-      ? (live ? '份额数据日期：' + latest : '数据日期：' + latest)
-      : '数据日期：不可用';
-    $('demo-chip').textContent = !online ? '离线预览' : (live ? '真实数据' : '演示数据');
-
-    var banner = $('data-banner'), mark = $('data-banner-mark');
-    if(banner && mark && online){
-      banner.className = live ? 'demo-banner live' : 'demo-banner';
-      mark.textContent = live ? '真实数据 · 概率推断，不可确权' : '演示数据 · 不可用于实盘决策';
-    }
-    var ft = $('footer-title');
-    if(ft) ft.textContent = live
-      ? '免责声明 · 真实数据（公开数据概率推断）· 不构成投资建议'
-      : '免责声明 · 演示数据 · 不可用于实盘决策';
-
-    var badge = $('conn-badge'), txt = $('conn-text');
-    if(online){
-      badge.className = 'conn-badge ok';
-      txt.textContent = '后端已连接 · ' + (live ? '真实数据' : '演示模式');
-    } else {
-      badge.className = 'conn-badge bad';
-      txt.textContent = '无法连接后端 · 离线预览';
-      $('offline-notice').hidden = false;
-    }
-
-    if(ov && ov.disclaimer){
-      $('footer-disclaimer').textContent = ov.disclaimer;
-    }
-    var ver = hp && hp.version ? (' · 后端版本 ' + hp.version) : '';
-    $('footer-meta').textContent = '国家队资金三层监控看板 · '
-      + (live ? '真实数据服务' : '静态演示页面') + ver
-      + ' · 所有信号均为推断、非实锤，无法确权';
-  }
-
-  /* ============ 启动：Promise.all 并发 ============ */
-  function boot(){
-    var keys = ['health','overview','etf','etfpool','momentum','strategy','signals','announcements','holdings','methodology','datasource'];
-    var requests;
-    try {
-      requests = keys.map(function(k){ return safeFetch(API[k]); });
-    } catch(e){
-      requests = keys.map(function(){ return Promise.resolve({ ok:false, error:'请求构造失败' }); });
-    }
-    return Promise.all(requests).then(function(results){
-      var R = {};
-      keys.forEach(function(k,i){ R[k] = results[i] || { ok:false, error:'无响应' }; });
-
-      guard('header/footer', function(){ renderHeaderAndFooter(R); });
-      guard('datasource', function(){ renderDataSource(R.datasource); });
-      guard('signal', function(){ renderSignal(R.overview); });
-      guard('layers', function(){ renderLayers(R.overview); });
-      guard('methodology', function(){ renderMethodology(R.methodology); });
-      guard('etf-pool', function(){ renderEtfPool(R.etfpool); });
-      guard('momentum', function(){ renderMomentum(R.momentum); });
-      guard('strategy', function(){ renderStrategy(R.strategy); });
-      guard('etf-chart', function(){ renderEtfChart(R.etf); });
-      guard('signals-chart', function(){ renderSignalsChart(R.signals); });
-      guard('conditions', function(){ renderConditions(R.overview); });
-      guard('announcements', function(){ renderAnnouncements(R.announcements); });
-      guard('holdings', function(){ renderHoldings(R.holdings); });
-    }).catch(function(e){
-      if(window.console && console.warn){ console.warn('[ntm] 初始化异常', e); }
-      var badge = $('conn-badge');
-      if(badge){ badge.className = 'conn-badge bad'; $('conn-text').textContent = '无法连接后端 · 离线预览'; }
-      var n = $('offline-notice'); if(n){ n.hidden = false; }
-    });
-  }
-
-  try {
-    window.addEventListener('resize', function(){
-      chartInstances.forEach(function(c){ try { c.resize(); } catch(e){} });
-    });
-    boot();
-  } catch(e){
-    if(window.console && console.warn){ console.warn('[ntm] 启动异常', e); }
-    var n = $('offline-notice'); if(n){ n.hidden = false; }
-  }
+  })).then(function(all){
+    render(all[0], all[1], all[2], all[3], all[4], all[5]);
+  }).catch(function(){
+    fail('数据加载失败');
+  });
 })();
 </script>
 </body>

@@ -130,3 +130,19 @@ def test_reference_strategy_contract():
     # 交易指令类规则必须全部落在「不实现」
     assert any("分批买入" in i["title"] for i in rejected)
     assert any("分批卖出" in i["title"] for i in rejected)
+
+
+def test_homepage_is_an_operator_dashboard():
+    """首页只挂信号和数字，不再内嵌方法论长文。"""
+    with _client_with_data() as c:
+        page = c.get("/")
+        overview = c.get("/api/overview").json()
+    assert page.status_code == 200
+    html = page.text
+    assert "国家队资金监控" in html
+    assert 'id="signal-label"' in html
+    assert "/api/overview" in html
+    for gone in ("参考策略存档", "噪音屏蔽", "静态演示页面", "跟踪方向与核实", "确权与交叉验证"):
+        assert gone not in html
+    assert overview["signal"]["state_label"]
+    assert "不构成投资建议" in overview["disclaimer"]
