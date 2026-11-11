@@ -230,6 +230,9 @@ NTM_WIND_KLINE_DAYS=120
 - `db.save_dataset` 是全量替换，适配器把每日快照累积在 `data/wind_history.json`，
   刷新时只补抓缺失交易日，避免清空历史序列导致图表与 5 日跌幅失效
 - **L1**：Wind MCP 无十大流通股东明细工具，保持空列表并显式标注缺口
+- 宽基走势的长成交额来自 `data/etf_kline.json`（格式见
+  `deploy/etf_kline.example.json`）。没有该文件时只画 `etf_daily` 里已有的日期；
+  净申购只取份额×净值，不用成交额顶替
 - **L3**：官方公告不自动确权，仅从 `data/verified_announcements.json` 读取
   人工核验记录（格式见 `deploy/verified_announcements.example.json`）；
   文件不存在即为空，三重共振不会因新闻误触发。`is_supportive` 必须由人工

@@ -59,11 +59,26 @@ td.num,th.num{text-align:right}
 tr.spike td{background:#f8f1ef}
 .anomaly{margin-top:12px;font-size:14px}
 .anomaly div{margin:4px 0}
+.panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:8px}
+.panel-head h2{margin:0}
+.ranges{font-size:13px;white-space:nowrap}
+.ranges button{background:none;border:0;border-bottom:1px solid transparent;color:var(--muted);font:inherit;font-size:13px;padding:0 0 1px;margin-left:16px;cursor:pointer}
+.ranges button.on{color:var(--ink);border-bottom-color:var(--ink)}
+.multiples{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px}
+.mini-card{padding-top:8px}
+.mini-title{font-size:14px;font-weight:600}
+.mini-title span{margin-left:8px;color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+.mini{height:168px}
+.mini-empty{height:168px;color:var(--muted);font-size:13px;padding-top:28px}
+.fine{margin:8px 0 0;color:var(--muted);font-size:12px}
 footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 @media(max-width:800px){
   .wrap{margin:0;padding:24px 16px 36px;border-left:0;border-right:0}
   h1{font-size:24px}
-  header,.kpis,.checks{display:block}
+  header,.kpis,.checks,.panel-head{display:block}
+  .ranges{margin-top:8px}
+  .ranges button:first-child{margin-left:0}
+  .multiples{grid-template-columns:1fr}
   .kpi{border-left:0;border-top:1px solid var(--line);padding:14px 0}
   .kpi:first-child{border-top:0}
   .signal .label{font-size:32px}
@@ -94,6 +109,18 @@ footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:v
     <h2 id="etf-title">宽基 ETF</h2>
     <div id="etf"></div>
     <div class="anomaly" id="anomaly"></div>
+  </section>
+  <section class="panel" id="trend-panel" hidden>
+    <div class="panel-head">
+      <h2>各宽基走势</h2>
+      <div class="ranges" id="trend-ranges">
+        <button type="button" data-months="1">近 1 个月</button>
+        <button type="button" data-months="3">近 3 个月</button>
+        <button type="button" data-months="12" class="on">近一年</button>
+      </div>
+    </div>
+    <div class="multiples" id="trends"></div>
+    <p class="fine" id="trend-note"></p>
   </section>
   <section class="panel" id="ann-panel" hidden>
     <h2>公告</h2>
@@ -341,6 +368,125 @@ footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:v
       );
     }
   }
+  var trendPayload = null;
+  var trendCharts = [];
+  function shiftMonth(iso, months){
+    var parts = String(iso || '').split('-');
+    if (parts.length < 3) return '0000-01-01';
+    var day = new Date(Date.UTC(+parts[0], +parts[1] - 1, +parts[2]));
+    day.setUTCMonth(day.getUTCMonth() - months);
+    return day.toISOString().slice(0, 10);
+  }
+  function trendNote(payload){
+    var first = null;
+    (payload.items || []).forEach(function(item){
+      (item.points || []).forEach(function(point){
+        if (point.net_yi != null && (first == null || point.date < first)) first = point.date;
+      });
+    });
+    var when = first ? ('目前从 ' + first + ' 起有日频') : '日频记录仍在补齐';
+    return '净申购来自份额×净值，' + when + '；成交额来自公开行情。柱为净申购，线为成交额。';
+  }
+  function renderTrends(payload){
+    var panel = $('trend-panel');
+    trendPayload = payload;
+    if (!payload || !payload.items || !payload.items.length){
+      panel.hidden = true;
+      return;
+    }
+    var any = payload.items.some(function(item){ return (item.points || []).length; });
+    if (!any){
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    $('trend-note').textContent = trendNote(payload);
+    drawTrends(12);
+  }
+  function drawTrends(months){
+    var box = $('trends');
+    trendCharts.forEach(function(chart){ chart.dispose(); });
+    trendCharts = [];
+    var payload = trendPayload || {items:[]};
+    var end = payload.as_of || '';
+    if (!end){
+      payload.items.forEach(function(item){
+        (item.points || []).forEach(function(point){
+          if (!end || point.date > end) end = point.date;
+        });
+      });
+    }
+    var start = shiftMonth(end, months);
+    if (!window.echarts){
+      box.textContent = '图表未加载';
+      return;
+    }
+    box.innerHTML = payload.items.map(function(item){
+      return '<div class="mini-card"><div class="mini-title">' + esc(item.name) + ' <span>' + esc(item.code) + '</span></div>'
+        + '<div class="mini" id="trend-' + esc(item.code) + '"></div></div>';
+    }).join('');
+    payload.items.forEach(function(item){
+      var points = (item.points || []).filter(function(point){ return point.date >= start; });
+      var node = document.getElementById('trend-' + item.code);
+      if (!node) return;
+      void node.offsetWidth;
+      if (!points.length){
+        node.className = 'mini-empty';
+        node.textContent = '这段没有数据';
+        return;
+      }
+      var chart = echarts.init(node);
+      trendCharts.push(chart);
+      chart.setOption({
+        animation:false,
+        grid:{left:42,right:42,top:16,bottom:22},
+        tooltip:{
+          trigger:'axis',
+          backgroundColor:'#fffcf8',
+          borderColor:'#e4e0d8',
+          textStyle:{color:'#1c1917', fontSize:12},
+          formatter:function(params){
+            var date = params[0].axisValue;
+            var net = null, amount = null, seenNet = false, seenAmount = false;
+            function raw(value){
+              return value && typeof value === 'object' ? value.value : value;
+            }
+            params.forEach(function(p){
+              if (p.seriesName === '净申购'){ seenNet = true; net = raw(p.value); }
+              if (p.seriesName === '成交额'){ seenAmount = true; amount = raw(p.value); }
+            });
+            function yi(ok, value){
+              if (!ok || value == null || value === '-') return '—';
+              return fmt(Number(value), 1) + ' 亿';
+            }
+            return date + '<br>净申购 ' + yi(seenNet, net) + '<br>成交额 ' + yi(seenAmount, amount);
+          }
+        },
+        xAxis:{
+          type:'category',
+          data:points.map(function(point){ return point.date; }),
+          axisLabel:{color:'#6b6560', fontSize:10, hideOverlap:true, formatter:function(value){ return String(value).slice(5); }},
+          axisLine:{lineStyle:{color:'#e4e0d8'}},
+          axisTick:{show:false}
+        },
+        yAxis:[
+          {type:'value', axisLabel:{color:'#6b6560', fontSize:10}, splitLine:{lineStyle:{color:'#e4e0d8'}}, splitNumber:3, axisLine:{show:false}, axisTick:{show:false}},
+          {type:'value', scale:true, axisLabel:{color:'#6b6560', fontSize:10}, splitLine:{show:false}, splitNumber:3, axisLine:{show:false}, axisTick:{show:false}}
+        ],
+        series:[
+          {name:'净申购', type:'bar', barMaxWidth:7, data:points.map(function(point){
+            if (point.net_yi == null) return null;
+            var value = Number(point.net_yi);
+            var color = value > 0 ? '#b42318' : (value < 0 ? '#0f7b4c' : '#6b6560');
+            return {value:value, itemStyle:{color:color}};
+          })},
+          {name:'成交额', type:'line', yAxisIndex:1, showSymbol:false, connectNulls:false,
+            data:points.map(function(point){ return point.amount_yi; }),
+            lineStyle:{color:'#6b6560', width:1.2}}
+        ]
+      });
+    });
+  }
   function draw(items){
     var box = $('chart');
     if (!window.echarts){ box.textContent = '图表未加载'; return; }
@@ -380,8 +526,19 @@ footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:v
           lineStyle:{color:'#1c1917',width:1.4}}
       ]
     });
-    window.addEventListener('resize', function(){ chart.resize(); });
+    window.addEventListener('resize', function(){
+      chart.resize();
+      trendCharts.forEach(function(item){ item.resize(); });
+    });
   }
+  document.getElementById('trend-ranges').addEventListener('click', function(event){
+    var button = event.target.closest ? event.target.closest('button') : null;
+    if (!button || !trendPayload) return;
+    Array.prototype.forEach.call(document.querySelectorAll('#trend-ranges button'), function(item){
+      item.className = item === button ? 'on' : '';
+    });
+    drawTrends(Number(button.getAttribute('data-months')) || 12);
+  });
   var urls = ['/api/overview','/api/etf/shares?days=30','/api/etf/momentum','/api/datasource','/api/announcements?limit=8','/api/holdings?limit=12','/api/reference/episodes'];
   Promise.all(urls.map(function(u){
     return fetch(u, {cache:'no-store'}).then(function(r){
@@ -390,6 +547,12 @@ footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:v
     });
   })).then(function(all){
     render(all[0], all[1], all[2], all[3], all[4], all[5], all[6]);
+    return fetch('/api/etf/history?days=250', {cache:'no-store'}).then(function(r){
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(renderTrends).catch(function(){
+      $('trend-panel').hidden = true;
+    });
   }).catch(function(){
     fail('数据加载失败');
   });

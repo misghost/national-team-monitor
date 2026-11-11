@@ -180,6 +180,9 @@ def test_homepage_is_an_operator_dashboard():
     assert "成交额（亿）" in html and "较昨日" in html and "净申购（亿）" in html
     assert "市场是否大跌" in html and "近30日净申购与沪深300" in html
     assert "无法确认申购人" in html
+    assert "各宽基走势" in html and "/api/etf/history?days=250" in html
+    assert "份额×净值" in html
+    assert "国家队买入" not in html and "东财" not in html
     assert "实盘" not in html and "wind-mcp" not in html
     assert "/api/overview" in html
     for gone in ("参考策略存档", "噪音屏蔽", "静态演示页面", "跟踪方向与核实", "确权与交叉验证"):

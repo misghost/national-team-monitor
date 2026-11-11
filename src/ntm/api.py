@@ -20,6 +20,7 @@ from .adapters import get_adapter
 from .entities import as_dict as entities_as_dict
 from .etf_pool import POOL_CAVEAT, claims_as_dict, pool_as_dict, validate_pool
 from .episodes import load_episodes
+from .etf_history import etf_history as build_etf_history
 from .models import Health, Overview, Signal
 from .reference import REFERENCE_STRATEGY
 from .signals import evaluate
@@ -115,6 +116,13 @@ def etf_pool() -> dict:
 def etf_momentum(day: str | None = Query(None)) -> dict:
     """量能异动观测（L3 辅助）。明确 is_signal=False，非买卖信号。"""
     return db.get_etf_momentum(day)
+
+
+@app.get("/api/etf/history")
+def etf_history(days: int = Query(250, ge=1, le=2000)) -> dict:
+    """各宽基长趋势。净申购只取 etf_daily；成交额和收盘价可回退到行情文件。"""
+    payload = build_etf_history(days)
+    return {"as_of": payload["as_of"], "is_demo": _is_demo(), "items": payload["items"]}
 
 
 def _attach_trigger_distance(signal: dict) -> None:
