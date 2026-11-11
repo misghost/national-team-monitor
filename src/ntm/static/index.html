@@ -37,12 +37,16 @@ tr.spike td{background:#3a1618}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .kpi .k{color:var(--muted);font-size:12px}
 .kpi .v{font-size:22px;font-weight:680;font-variant-numeric:tabular-nums;margin-top:2px}
-.checks{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
-.check{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);
-  border-radius:999px;background:var(--card);color:var(--muted);font-size:13px}
-.check.on{color:var(--ink);border-color:#3d4a63}
+.checks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 10px}
+.check{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.check.on{border-color:#3d4a63}
+.check .name{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-bottom:6px}
 .mark{width:8px;height:8px;border-radius:50%;background:#3a4254;display:inline-block}
 .check.on .mark{background:var(--ink)}
+.meter{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;margin-top:4px;font-size:12px;font-variant-numeric:tabular-nums}
+.meter .track{grid-column:1 / -1;height:3px;background:#2a3140;border-radius:99px;overflow:hidden}
+.meter .track i{display:block;height:100%;background:#8b95a8}
+.check.on .meter .track i{background:#d7dde8}
 .chart{height:320px;background:var(--card);border:1px solid var(--line);border-radius:12px}
 .panel{margin-top:12px}
 .panel h2{font-size:13px;font-weight:650;margin:0 0 8px;color:var(--muted)}
@@ -57,7 +61,7 @@ td.num,th.num{text-align:right}
 .flat{color:var(--flat)}
 footer{margin-top:18px;color:var(--muted);font-size:12px}
 @media(max-width:800px){
-  .kpis{grid-template-columns:1fr 1fr}
+  .kpis,.checks{grid-template-columns:1fr}
   .signal .label{font-size:26px}
   header{flex-direction:column;align-items:flex-start}
 }
@@ -78,6 +82,10 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
   <div class="kpis" id="kpis"></div>
   <div class="checks" id="checks"></div>
   <div class="chart" id="chart"></div>
+  <section class="panel" id="episode-panel" hidden>
+    <h2>历史对照</h2>
+    <div id="episodes"></div>
+  </section>
   <section class="panel">
     <h2 id="etf-title">宽基 ETF</h2>
     <div id="etf"></div>
@@ -136,7 +144,68 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
     el.textContent = msg || '数据加载失败';
     $('status').textContent = '未连接';
   }
-  function render(overview, shares, momentum, source, anns, holds){
+  function metricText(m){
+    var value = num(m.value);
+    var threshold = num(m.threshold);
+    if (m.unit === 'pct') return fmt(value, 2) + '% / ' + fmt(threshold, 1) + '%';
+    if (m.unit === 'yi') return fmt(value, 1) + ' / ' + (threshold == null ? '—' : threshold.toFixed(0)) + ' 亿';
+    return (value == null ? '—' : String(Math.round(value))) + ' / ' + (threshold == null ? '—' : String(Math.round(threshold)));
+  }
+  function gapText(m){
+    var gap = num(m.gap);
+    if (gap == null) return '';
+    if (gap <= 0) return '已到';
+    if (m.unit === 'pct') return '还差 ' + gap.toFixed(2) + ' 个百分点';
+    if (m.unit === 'yi') return '还差 ' + gap.toFixed(1) + ' 亿';
+    return '还差 ' + String(Math.round(gap));
+  }
+  function renderChecks(cond){
+    var order = ['market_drop', 'etf_sync', 'official'];
+    $('checks').innerHTML = order.map(function(key){
+      var c = cond[key];
+      if (!c) return '';
+      var on = c.met === true;
+      var meters = (c.metrics || []).map(function(m){
+        var progress = Math.max(0, Math.min(1, num(m.progress) || 0));
+        return '<div class="meter"><span>' + esc(m.label) + ' ' + metricText(m) + '</span><span>'
+          + esc(gapText(m)) + '</span><div class="track"><i style="width:' + (progress * 100) + '%"></i></div></div>';
+      }).join('');
+      return '<div class="check' + (on ? ' on' : '') + '"><div class="name"><i class="mark"></i>'
+        + esc(c.label || key) + '</div>' + meters + '</div>';
+    }).join('');
+  }
+  function renderEpisodes(payload, todayDaily, today5){
+    var items = (payload && payload.items) || [];
+    var panel = $('episode-panel');
+    if (!items.length || todayDaily == null){
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    var rows = [{name:'今日', daily: todayDaily, cum: today5, note:''}].concat(items.map(function(ep){
+      return {name: ep.name, daily: num(ep.peak_daily_net_yi), cum: num(ep.cum_net_yi), note: ep.note || ''};
+    }));
+    var maxDaily = 0, maxCum = 0;
+    rows.forEach(function(r){
+      maxDaily = Math.max(maxDaily, Math.abs(r.daily || 0));
+      maxCum = Math.max(maxCum, Math.abs(r.cum || 0));
+    });
+    function bar(value, max){
+      var width = max > 0 ? Math.round(Math.abs(value || 0) / max * 100) : 0;
+      return '<div class="track" style="width:88px;display:inline-block;vertical-align:middle;margin-right:6px"><i class="'
+        + cls(value) + '" style="width:' + width + '%;background:currentColor"></i></div>'
+        + '<span class="' + cls(value) + '">' + fmt(value, 1) + '</span>';
+    }
+    $('episodes').innerHTML = table(
+      [{t:''},{t:'当日或单日峰值',num:1},{t:'近5日或区间累计',num:1}],
+      rows.map(function(r){
+        var note = r.note ? '<div class="anomaly">' + esc(r.note) + '</div>' : '';
+        return '<tr><td>' + esc(r.name) + note + '</td><td class="num">' + bar(r.daily, maxDaily)
+          + '</td><td class="num">' + bar(r.cum, maxCum) + '</td></tr>';
+      }).join('')
+    );
+  }
+  function render(overview, shares, momentum, source, anns, holds, episodes){
     var sig = overview.signal || {};
     var items = (shares && shares.items) || [];
     var last = items.length ? items[items.length - 1] : null;
@@ -164,16 +233,9 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
       return '<div class="kpi"><div class="k">' + esc(k[0]) + '</div>'
         + '<div class="v ' + cls(k[1]) + '">' + fmt(k[1]) + '<span style="font-size:13px;font-weight:500"> ' + k[2] + '</span></div></div>';
     }).join('');
-    var cond = sig.conditions || {};
-    var order = ['market_drop', 'etf_sync', 'official'];
-    $('checks').innerHTML = order.map(function(key){
-      var c = cond[key];
-      if (!c) return '';
-      var on = c.met === true;
-      return '<div class="check' + (on ? ' on' : '') + '"><i class="mark"></i>'
-        + esc(c.label || key) + '</div>';
-    }).join('');
+    renderChecks(sig.conditions || {});
     draw(items);
+    renderEpisodes(episodes, last ? num(last.net_subscription_yi) : null, sumLast(items, 5));
     var etfs = (momentum && momentum.items) || [];
     var threshold = (momentum && momentum.summary && num(momentum.summary.threshold)) || 2;
     if (momentum && momentum.date) $('etf-title').textContent = '宽基 ETF · ' + momentum.date;
@@ -254,14 +316,14 @@ footer{margin-top:18px;color:var(--muted);font-size:12px}
     });
     window.addEventListener('resize', function(){ chart.resize(); });
   }
-  var urls = ['/api/overview','/api/etf/shares?days=30','/api/etf/momentum','/api/datasource','/api/announcements?limit=8','/api/holdings?limit=12'];
+  var urls = ['/api/overview','/api/etf/shares?days=30','/api/etf/momentum','/api/datasource','/api/announcements?limit=8','/api/holdings?limit=12','/api/reference/episodes'];
   Promise.all(urls.map(function(u){
     return fetch(u, {cache:'no-store'}).then(function(r){
       if (!r.ok) throw new Error(r.status);
       return r.json();
     });
   })).then(function(all){
-    render(all[0], all[1], all[2], all[3], all[4], all[5]);
+    render(all[0], all[1], all[2], all[3], all[4], all[5], all[6]);
   }).catch(function(){
     fail('数据加载失败');
   });

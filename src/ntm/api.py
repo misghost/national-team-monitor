@@ -19,8 +19,10 @@ from . import alert, backtest, config, db, datasource, layers
 from .adapters import get_adapter
 from .entities import as_dict as entities_as_dict
 from .etf_pool import POOL_CAVEAT, claims_as_dict, pool_as_dict, validate_pool
+from .episodes import load_episodes
 from .models import Health, Overview, Signal
 from .reference import REFERENCE_STRATEGY
+from .signals import evaluate
 from .scheduler import refresh_once, start_background_scheduler
 
 log = logging.getLogger("ntm.api")
@@ -82,6 +84,7 @@ def overview() -> dict:
             "conditions": {}, "caveat": "",
         }
     as_of = signal.get("date") or db.get_meta("dataset_as_of", "")
+    _attach_trigger_distance(signal)
     return {
         "as_of": as_of,
         "is_demo": _is_demo(),
@@ -112,6 +115,30 @@ def etf_pool() -> dict:
 def etf_momentum(day: str | None = Query(None)) -> dict:
     """量能异动观测（L3 辅助）。明确 is_signal=False，非买卖信号。"""
     return db.get_etf_momentum(day)
+
+
+def _attach_trigger_distance(signal: dict) -> None:
+    """用当天行情给三个条件补上 value/threshold/gap。不改已存的 met 和状态。"""
+    day = signal.get("date") or ""
+    if not day:
+        return
+    inp = db.day_signal_input(day)
+    if inp is None:
+        return
+    fresh = evaluate(inp)["conditions"]
+    current = signal.setdefault("conditions", {})
+    for key, built in fresh.items():
+        cond = current.setdefault(key, {})
+        cond["metrics"] = built["metrics"]
+        cond.setdefault("met", built["met"])
+        cond.setdefault("label", built["label"])
+        cond.setdefault("detail", built["detail"])
+
+
+@app.get("/api/reference/episodes")
+def reference_episodes() -> dict:
+    """历史对照。data/history_reference.json 不存在时返回空列表，页面不展示。"""
+    return {"items": load_episodes()}
 
 
 @app.get("/api/reference/strategy")

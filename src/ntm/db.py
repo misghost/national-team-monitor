@@ -299,6 +299,33 @@ def recompute_signals() -> int:
 
 # ---------------- 查询 ----------------
 
+def day_signal_input(day: str):
+    """某一交易日的三重共振输入。口径与 recompute_signals 相同。"""
+    from .signals import SignalInput
+
+    with connect() as conn:
+        market = conn.execute("SELECT * FROM market_daily WHERE date=?", (day,)).fetchone()
+        if market is None:
+            return None
+        etf = conn.execute(
+            "SELECT est_net_yi FROM etf_daily WHERE date=?", (day,)
+        ).fetchall()
+        anns = conn.execute(
+            "SELECT date FROM announcements WHERE is_supportive=1"
+        ).fetchall()
+    values = [r["est_net_yi"] for r in etf]
+    supportive_dates = {r["date"] for r in anns}
+    window = config.OFFICIAL_LOOKBACK_DAYS
+    return SignalInput(
+        date=day,
+        index_change_pct=market["index_change_pct"],
+        index_change_5d_pct=market["index_change_5d_pct"],
+        sync_etf_count=sum(1 for v in values if v and v > 0),
+        net_subscription_yi=round(sum(values), 2) if values else 0.0,
+        supportive_announcements=len(supportive_dates & _lookback_dates(day, window)),
+    )
+
+
 def get_market_row(day: str) -> dict | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM market_daily WHERE date=?", (day,)).fetchone()

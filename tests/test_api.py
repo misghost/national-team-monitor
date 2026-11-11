@@ -132,6 +132,40 @@ def test_reference_strategy_contract():
     assert any("分批卖出" in i["title"] for i in rejected)
 
 
+def test_overview_exposes_trigger_distance():
+    with _client_with_data() as c:
+        cond = c.get("/api/overview").json()["signal"]["conditions"]
+    for key in ("market_drop", "etf_sync", "official"):
+        metrics = cond[key]["metrics"]
+        assert metrics
+        for item in metrics:
+            assert {"value", "threshold", "gap", "unit", "progress"} <= set(item)
+            assert item["gap"] >= 0
+            assert 0 <= item["progress"] <= 1
+
+
+def test_reference_episodes_missing_file_is_empty():
+    with _client_with_data() as c:
+        assert c.get("/api/reference/episodes").json() == {"items": []}
+
+
+def test_reference_episodes_reads_json(tmp_path, monkeypatch):
+    from ntm import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    (tmp_path / "history_reference.json").write_text(
+        '[{"name":"示例段","start":"2024-01-01","end":"2024-02-01",'
+        '"peak_daily_net_yi":800,"cum_net_yi":2400,"max_drawdown_pct":-8.5,'
+        '"note":"示例数值，不是真实历史"},{"name":"缺字段"}]',
+        encoding="utf-8",
+    )
+    with _client_with_data() as c:
+        items = c.get("/api/reference/episodes").json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "示例段"
+    assert items[0]["peak_daily_net_yi"] == 800
+    assert items[0]["note"]
+
+
 def test_homepage_is_an_operator_dashboard():
     """首页只挂信号和数字，不再内嵌方法论长文。"""
     with _client_with_data() as c:
@@ -141,6 +175,8 @@ def test_homepage_is_an_operator_dashboard():
     html = page.text
     assert "国家队资金监控" in html
     assert 'id="signal-label"' in html
+    assert 'id="episode-panel"' in html
+    assert "/api/reference/episodes" in html
     assert "当日成交额" in html and "放量倍数" in html and "份额变化" in html
     assert "/api/overview" in html
     for gone in ("参考策略存档", "噪音屏蔽", "静态演示页面", "跟踪方向与核实", "确权与交叉验证"):
